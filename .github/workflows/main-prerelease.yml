@@ -1,0 +1,72 @@
+name: Main Prerelease Build
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dipsy-main-prerelease
+  cancel-in-progress: true
+
+jobs:
+  build-main-prerelease:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress -y
+
+      - name: Resolve prerelease version
+        id: version
+        shell: powershell
+        run: |
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
+          $appVersion = "0.0.${{ github.run_number }}.${{ github.run_attempt }}"
+          $installerBaseName = "DipsyDolphin-Setup-main-$shortSha"
+          "short_sha=$shortSha" >> $env:GITHUB_OUTPUT
+          "app_version=$appVersion" >> $env:GITHUB_OUTPUT
+          "installer_base_name=$installerBaseName" >> $env:GITHUB_OUTPUT
+          "installer_path=.artifacts/windows/installer/$installerBaseName.exe" >> $env:GITHUB_OUTPUT
+
+      - name: Build prerelease installer
+        shell: powershell
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\packaging\windows\build-installer.ps1 -Clean -AppVersion "${{ steps.version.outputs.app_version }}" -OutputBaseName "${{ steps.version.outputs.installer_base_name }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.installer_base_name }}
+          path: ${{ steps.version.outputs.installer_path }}
+
+      - name: Publish rolling prerelease
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          artifacts: ${{ steps.version.outputs.installer_path }}
+          artifactErrorsFailBuild: true
+          commit: ${{ github.sha }}
+          body: |
+            Automated prerelease build from `main`.
+
+            - Commit: `${{ github.sha }}`
+            - Build: `${{ github.run_number }}`
+          name: Dipsy Dolphin Main Prerelease
+          omitBodyDuringUpdate: false
+          prerelease: true
+          removeArtifacts: true
+          replacesArtifacts: true
+          tag: main-latest

@@ -1,18 +1,20 @@
 import math
 import random
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import simpledialog
+from typing import Optional
 
 from .brain import AssistantBrain
 from .models import SessionState
+from .storage import ProfileStore
 
 
 class AssistantApp(tk.Tk):
     TRANSPARENT_KEY = "#FF00F0"
 
-    def __init__(self) -> None:
+    def __init__(self, profile_store: Optional[ProfileStore] = None) -> None:
         super().__init__()
-        self.title("ByteBuddy")
+        self.title("Dipsy Dolphin")
 
         self.pet_width = 200
         self.pet_height = 220
@@ -22,19 +24,16 @@ class AssistantApp(tk.Tk):
         self.wandering_enabled = True
         self.walk_target_x = 100
         self.walk_target_y = 100
-        self.bubble_window = None
-        self.bubble_label = None
-        self.bubble_hide_job = None
+        self.bubble_window: Optional[tk.Toplevel] = None
+        self.bubble_label: Optional[tk.Label] = None
+        self.bubble_hide_job: Optional[str] = None
         self.walk_phase = 0
+        self.walk_toggle_index = 0
+        self.onboarding_active = False
 
         self.brain = AssistantBrain()
-        self.session = SessionState()
-        self.idle_lines = [
-            "Right-click me for tricks and status.",
-            "I look harmless, but this is a social-engineering awareness drill.",
-            "Grant simulated permissions carefully.",
-            "I wander, therefore I am.",
-        ]
+        self.profile_store = profile_store or ProfileStore()
+        self.session = SessionState(profile=self.profile_store.load_profile())
 
         self._configure_pet_window()
         self._build_layout()
@@ -42,6 +41,8 @@ class AssistantApp(tk.Tk):
         self._position_initially()
         self._choose_new_target()
         self._seed_intro()
+        if not self.session.onboarding_complete:
+            self.after(900, self._start_onboarding)
         self._wander_tick()
         self._idle_chatter_tick()
         self._keep_on_top_tick()
@@ -74,11 +75,12 @@ class AssistantApp(tk.Tk):
         )
         self.canvas.pack()
 
-        self.canvas.create_oval(48, 194, 158, 214, fill="#0B1518", outline="")
-        self.canvas.create_oval(54, 58, 154, 186, fill="#F4A261", outline="#D1793F", width=3)
-        self.canvas.create_oval(66, 30, 146, 118, fill="#F4A261", outline="#D1793F", width=3)
-        self.canvas.create_oval(68, 162, 96, 188, fill="#E99356", outline="")
-        self.canvas.create_oval(112, 162, 140, 188, fill="#E99356", outline="")
+        self.canvas.create_oval(42, 194, 166, 214, fill="#0B1518", outline="")
+        self.canvas.create_arc(42, 62, 166, 190, start=210, extent=300, fill="#66B7D8", outline="#2F6F93", width=3)
+        self.canvas.create_oval(74, 42, 150, 110, fill="#7CD4F5", outline="#2F6F93", width=3)
+        self.canvas.create_polygon(56, 112, 30, 92, 46, 132, fill="#66B7D8", outline="#2F6F93", width=3)
+        self.canvas.create_polygon(106, 70, 120, 36, 130, 76, fill="#7CD4F5", outline="#2F6F93", width=3)
+        self.canvas.create_polygon(136, 154, 154, 182, 118, 168, fill="#5AA9CB", outline="#2F6F93", width=3)
 
         self.left_eye = self.canvas.create_oval(83, 66, 97, 80, fill="#F8F9FA", outline="")
         self.right_eye = self.canvas.create_oval(115, 66, 129, 80, fill="#F8F9FA", outline="")
@@ -89,8 +91,8 @@ class AssistantApp(tk.Tk):
         self.canvas.create_text(
             104,
             126,
-            text="BYTE",
-            fill="#102226",
+            text="DIPSY",
+            fill="#103248",
             font=("Franklin Gothic Medium", 10, "bold"),
         )
 
@@ -110,14 +112,15 @@ class AssistantApp(tk.Tk):
             activeforeground="#111111",
             relief="flat",
         )
-        self.menu.add_command(label="Talk to ByteBuddy", command=self._chat_prompt)
-        self.menu.add_command(label="Ask for Permission", command=self._ask_for_permission)
+        self.menu.add_command(label="Talk to Dipsy", command=self._chat_prompt)
         self.menu.add_command(label="Tell a Joke", command=self._tell_joke)
+        self.menu.add_command(label="Do Something", command=self._random_bit)
         self.menu.add_command(label="Show Status", command=self._show_status)
-        self.menu.add_command(label="Reset Simulation", command=self._reset_simulation)
+        self.menu.add_command(label="Reset Session", command=self._reset_session)
         self.menu.add_separator()
         self.menu.add_command(label="Pause Walking", command=self._toggle_wandering)
-        self.walk_toggle_index = self.menu.index("end")
+        toggle_index = self.menu.index("end")
+        self.walk_toggle_index = 0 if toggle_index is None else toggle_index
         self.menu.add_command(label="Quit", command=self._quit)
 
     def _position_initially(self) -> None:
@@ -128,127 +131,79 @@ class AssistantApp(tk.Tk):
         self.geometry(f"{self.pet_width}x{self.pet_height}+{start_x}+{start_y}")
 
     def _seed_intro(self) -> None:
-        self._speak(
-            "Hey! I am ByteBuddy. Right-click me for jokes, chat, and a safe permission-risk simulation.",
-            duration_ms=9000,
+        self._speak(self.brain.startup_line(self.session), duration_ms=7000)
+
+    def _persist_profile(self) -> None:
+        self.profile_store.save_profile(self.session.profile)
+
+    def _start_onboarding(self) -> None:
+        if self.session.onboarding_complete or self.onboarding_active:
+            return
+
+        self.onboarding_active = True
+        self._speak(self.brain.onboarding_name_prompt(), duration_ms=5000)
+        user_name = simpledialog.askstring(
+            "Dipsy Dolphin",
+            self.brain.onboarding_name_prompt(),
+            parent=self,
         )
+        if user_name:
+            self.session.user_name = user_name.strip() or "friend"
+        self._speak(
+            self.brain.onboarding_interest_prompt(self.session.user_name),
+            duration_ms=6500,
+        )
+        interests_text = simpledialog.askstring(
+            "Dipsy Dolphin",
+            self.brain.onboarding_interest_prompt(self.session.user_name),
+            parent=self,
+        )
+        if interests_text:
+            parsed = self.brain.parse_interests(interests_text)
+            if parsed:
+                self.session.interests = parsed
+
+        self.session.profile.has_met_user = True
+        self.session.onboarding_complete = True
+        self._persist_profile()
+        self.onboarding_active = False
+        self._speak(self.brain.finish_onboarding(self.session), duration_ms=9000)
 
     def _chat_prompt(self, _event=None) -> None:
+        if self.onboarding_active:
+            return
         user_text = simpledialog.askstring(
-            "Talk to ByteBuddy",
+            "Talk to Dipsy Dolphin",
             "Say something:",
             parent=self,
         )
         if not user_text:
             return
 
+        profile_before = (self.session.user_name, tuple(self.session.interests))
         reply = self.brain.handle_user_message(user_text, self.session)
+        profile_after = (self.session.user_name, tuple(self.session.interests))
+        if profile_after != profile_before:
+            self.session.profile.has_met_user = True
+            self.session.onboarding_complete = self.session.profile.is_configured()
+            self._persist_profile()
         self._speak(reply, duration_ms=7000)
 
     def _tell_joke(self) -> None:
-        joke = self.brain.handle_user_message("tell me a joke", self.session)
+        joke = self.brain.tell_joke(self.session)
         self._speak(joke, duration_ms=6500)
 
+    def _random_bit(self) -> None:
+        self._speak(self.brain.random_autonomous_line(self.session), duration_ms=7000)
+
     def _show_status(self) -> None:
-        self._speak(self.brain.permissions_status_line(self.session), duration_ms=6000)
+        self._speak(self.brain.status_line(self.session), duration_ms=7000)
 
-    def _reset_simulation(self) -> None:
+    def _reset_session(self) -> None:
         self.brain.reset_state(self.session)
-        self._speak("Simulation reset. Fresh start, same questionable charm.")
-
-    def _ask_for_permission(self) -> None:
-        permission, pitch = self.brain.next_permission_request(self.session)
-        if not permission:
-            self._speak(pitch)
-            return
-
-        self._open_permission_dialog(permission.id, permission.title, pitch)
-
-    def _open_permission_dialog(self, permission_id: str, title: str, pitch: str) -> None:
-        dialog = tk.Toplevel(self)
-        dialog.title("ByteBuddy Permission Pitch")
-        dialog.configure(bg="#1F2937")
-        dialog.resizable(False, False)
-        dialog.attributes("-topmost", True)
-        dialog.transient(self)
-        dialog.grab_set()
-
-        tk.Label(
-            dialog,
-            text=title,
-            font=("Segoe UI", 13, "bold"),
-            bg="#1F2937",
-            fg="#F8F9FA",
-            pady=10,
-        ).pack(padx=16)
-
-        tk.Label(
-            dialog,
-            text=pitch,
-            wraplength=340,
-            justify="left",
-            font=("Segoe UI", 10),
-            bg="#1F2937",
-            fg="#D1D5DB",
-            padx=16,
-            pady=6,
-        ).pack()
-
-        tk.Label(
-            dialog,
-            text="Simulation only. This does not request real system access.",
-            font=("Consolas", 9),
-            bg="#1F2937",
-            fg="#FBBF24",
-            pady=4,
-        ).pack()
-
-        buttons = tk.Frame(dialog, bg="#1F2937")
-        buttons.pack(fill="x", padx=12, pady=12)
-
-        tk.Button(
-            buttons,
-            text="Grant",
-            command=lambda: self._resolve_permission(dialog, permission_id, True),
-            bg="#34D399",
-            fg="#111827",
-            relief="flat",
-            padx=10,
-            pady=7,
-            cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
-        ).pack(side="left", fill="x", expand=True, padx=(0, 5))
-
-        tk.Button(
-            buttons,
-            text="Deny",
-            command=lambda: self._resolve_permission(dialog, permission_id, False),
-            bg="#F87171",
-            fg="#111827",
-            relief="flat",
-            padx=10,
-            pady=7,
-            cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
-        ).pack(side="left", fill="x", expand=True, padx=(5, 0))
-
-        dialog.protocol("WM_DELETE_WINDOW", lambda: self._resolve_permission(dialog, permission_id, False))
-        self._position_dialog_near_pet(dialog)
-
-    def _resolve_permission(self, dialog: tk.Toplevel, permission_id: str, granted: bool) -> None:
-        dialog.grab_release()
-        dialog.destroy()
-
-        decision_text, triggered = self.brain.apply_permission_decision(permission_id, granted, self.session)
-        self._speak(decision_text, duration_ms=7000)
-
-        if triggered:
-            messagebox.showerror(
-                "YOU LOSE",
-                "YOU LOSE\n\nSimulation result: risky permissions were combined.\nNo real system actions were performed.",
-                parent=self,
-            )
-            self._speak("YOU LOSE triggered. Security lesson complete. No system changes occurred.", duration_ms=6500)
+        self.profile_store.delete_profile()
+        self._speak("Session reset. Let us do the dramatic intro again.", duration_ms=5000)
+        self.after(700, self._start_onboarding)
 
     def _toggle_wandering(self) -> None:
         self.wandering_enabled = not self.wandering_enabled
@@ -257,9 +212,9 @@ class AssistantApp(tk.Tk):
 
         if self.wandering_enabled:
             self._choose_new_target()
-            self._speak("Patrol mode back on. I am roaming again.", duration_ms=4000)
+            self._speak("Swim mode back on. I am roaming again.", duration_ms=4000)
         else:
-            self._speak("Standing by. Drag me anywhere.", duration_ms=3500)
+            self._speak("Floating in place. Drag me anywhere.", duration_ms=3500)
 
     def _drag_start(self, event: tk.Event) -> None:
         self.dragging = True
@@ -295,8 +250,8 @@ class AssistantApp(tk.Tk):
 
             if distance < 8:
                 self._choose_new_target()
-                if random.random() < 0.18:
-                    self._speak(random.choice(self.idle_lines), duration_ms=4200)
+                if self.session.onboarding_complete and random.random() < 0.1:
+                    self._speak(self.brain.random_autonomous_line(self.session), duration_ms=5200)
             else:
                 step = min(7, distance)
                 move_x = int(current_x + (delta_x / distance) * step)
@@ -309,9 +264,9 @@ class AssistantApp(tk.Tk):
         self.after(70, self._wander_tick)
 
     def _idle_chatter_tick(self) -> None:
-        if random.random() < 0.12 and not self.dragging:
-            self._speak(random.choice(self.idle_lines), duration_ms=3800)
-        self.after(9000, self._idle_chatter_tick)
+        if self.session.onboarding_complete and not self.dragging and random.random() < 0.28:
+            self._speak(self.brain.random_autonomous_line(self.session), duration_ms=5200)
+        self.after(random.randint(7000, 13000), self._idle_chatter_tick)
 
     def _keep_on_top_tick(self) -> None:
         self.attributes("-topmost", True)
@@ -365,7 +320,8 @@ class AssistantApp(tk.Tk):
             self.bubble_label.pack()
         else:
             self.bubble_window.deiconify()
-            self.bubble_label.configure(text=text)
+            if self.bubble_label is not None:
+                self.bubble_label.configure(text=text)
 
         self._position_bubble()
 
@@ -403,25 +359,10 @@ class AssistantApp(tk.Tk):
 
         self.bubble_window.geometry(f"+{bubble_x}+{bubble_y}")
 
-    def _position_dialog_near_pet(self, dialog: tk.Toplevel) -> None:
-        dialog.update_idletasks()
-        width = dialog.winfo_width()
-        height = dialog.winfo_height()
-
-        screen_width = self.winfo_screenwidth()
-        screen_height = self.winfo_screenheight()
-
-        x = self.winfo_x() + self.pet_width + 14
-        if x + width > screen_width - 12:
-            x = max(12, self.winfo_x() - width - 14)
-
-        y = self.winfo_y() + 20
-        if y + height > screen_height - 12:
-            y = max(12, screen_height - height - 12)
-
-        dialog.geometry(f"+{x}+{y}")
-
     def _quit(self) -> None:
+        if self.session.onboarding_complete:
+            self._persist_profile()
+
         if self.bubble_hide_job:
             self.after_cancel(self.bubble_hide_job)
             self.bubble_hide_job = None

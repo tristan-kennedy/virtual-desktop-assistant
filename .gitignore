@@ -7,9 +7,8 @@ __pycache__/
 venv/
 env/
 ENV/
-build/
-dist/
 *.spec
+.artifacts/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
