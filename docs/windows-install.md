@@ -2,37 +2,41 @@
 
 ## Overview
 
-Dipsy Dolphin supports both a quick local install flow and a real Inno Setup installer flow.
+Dipsy Dolphin uses a simple two-step Windows packaging flow.
 
-- Inno Setup installs app files to `%LOCALAPPDATA%\Programs\Dipsy Dolphin` by default
-- The quick local install script copies app files to `%LOCALAPPDATA%\DipsyDolphin\app`
+- `scripts.windows_build` is the canonical packaging entrypoint
+- `build-app.ps1` and `build-installer.ps1` are thin PowerShell shims for Windows convenience
+- `pyproject.toml` and `uv.lock` are the source of truth for dependencies and release versioning
 - Profile data is stored in `%LOCALAPPDATA%\DipsyDolphin\data\profile.json`
-- The Inno Setup flow registers a normal Windows uninstaller for the current user
+- The installer registers a normal Windows uninstaller for the current user
 
 ## Local build
 
 Build the Windows app bundle with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\packaging\windows\build-app.ps1
+uv run python -m scripts.windows_build app --clean
 ```
 
-That script creates an isolated build virtual environment in `.artifacts\windows\.venv-build` and writes the packaged app bundle to `.artifacts\windows\pyinstaller\dist\DipsyDolphin`.
+That command uses `uv` to install the pinned Python version, sync a locked build environment in `.artifacts\windows\.venv-build`, and write the packaged app bundle to `.artifacts\windows\pyinstaller\dist\DipsyDolphin`.
 
 ## Installer build
 
 Build the Windows setup wizard with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\packaging\windows\build-installer.ps1
+uv run python -m scripts.windows_build installer --clean
 ```
 
 Notes:
 
-- The script first builds the app bundle unless `-SkipAppBuild` is supplied
+- The installer build first creates the app bundle unless `--skip-app-build` is supplied
+- The app build uses `uv.lock`, so packaging stays reproducible across local and CI runs
+- You can override the Python version used for packaging with `--python-version`
 - Inno Setup 6 must be installed so `ISCC.exe` is available
-- The finished installer is written to `.artifacts\windows\installer\DipsyDolphin-Setup.exe`
-- You can override the installer version with `-AppVersion` and the output file name with `-OutputBaseName`
+- The finished installer is written to `.artifacts\windows\installer\DipsyDolphin-Setup-<version>.exe` by default
+- You can override the installer version with `--app-version` and the output file name with `--output-base-name`
+- If you prefer PowerShell wrappers, `packaging\windows\build-app.ps1` and `packaging\windows\build-installer.ps1` forward their arguments to the Python CLI
 
 If Inno Setup is not installed yet, one option is:
 
@@ -40,38 +44,42 @@ If Inno Setup is not installed yet, one option is:
 winget install JRSoftware.InnoSetup
 ```
 
-## Local install
+## Local development
 
-For quick local testing without the wizard, install the packaged app for the current user with:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\packaging\windows\install-local.ps1 -Build -DesktopShortcut
-```
-
-Notes:
-
-- `-Build` rebuilds the app before copying it into the install directory
-- `-DesktopShortcut` creates `Dipsy Dolphin.lnk` on the current user's desktop
-
-## Uninstall
-
-Remove the quick local install with:
+For day-to-day development, let `uv` manage the local project environment:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\packaging\windows\uninstall-local.ps1
+uv python install
+uv sync
 ```
 
-That removes the quick local install, the stored profile data, and the desktop shortcut created by the local install script.
+Then run:
+
+```powershell
+uv run dipsy-dolphin
+```
+
+Common dependency commands:
+
+```powershell
+uv add <package>
+uv remove <package>
+uv lock --upgrade-package <package>
+```
+
+If you need a pip-compatible export for some other tool, generate it from the lockfile:
+
+```powershell
+uv export --format requirements.txt -o requirements.txt
+```
+
+Only use the packaging commands when you want a bundled app or installer. They create and manage a separate locked build environment under `.artifacts\windows\.venv-build`.
 
 ## GitHub Actions automation
 
-Two workflows live in `.github/workflows/`:
+One workflow now lives in `.github/workflows/versioned-release.yml`.
 
-- `main-prerelease.yml` builds on every push to `main`, uploads the installer as a workflow artifact, and updates the rolling prerelease tagged `main-latest`
-- `release-installer.yml` builds on version tags matching `v*`, uploads the installer as a workflow artifact, and publishes a normal GitHub Release
-
-Release versioning rules:
-
-- A git tag like `v0.3.0` becomes installer version `0.3.0`
-- The tagged release asset is named `DipsyDolphin-Setup-0.3.0.exe`
-- Main prerelease assets are named like `DipsyDolphin-Setup-main-1a2b3c4.exe`
+- Pushes to `main` only create a release when `project.version` changes in `pyproject.toml`
+- PEP 440 prerelease versions like `0.3.0b1` or `0.3.0rc1` publish GitHub prereleases
+- Stable versions like `0.3.0` publish normal GitHub releases
+- The generated installer asset is named from that same version, such as `DipsyDolphin-Setup-0.3.0b1.exe`

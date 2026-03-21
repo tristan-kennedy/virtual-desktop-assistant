@@ -39,7 +39,9 @@ class AssistantBrain:
     def startup_line(self, state: SessionState) -> str:
         if state.onboarding_complete:
             interests = self._format_interest_list(state.interests)
-            return f"Welcome back, {state.user_name}. I still remember your interest in {interests}."
+            return (
+                f"Welcome back, {state.user_name}. I still remember your interest in {interests}."
+            )
         return "Hey. I am Dipsy Dolphin, your retro desktop pal. Let me get to know you a little."
 
     def onboarding_name_prompt(self) -> str:
@@ -63,12 +65,16 @@ class AssistantBrain:
         state.conversation_history.append(clean)
         lowered = clean.lower()
 
-        name_match = re.search(r"(?:i am|i'm|my name is|call me)\s+([a-zA-Z0-9_-]{2,24})", clean, re.IGNORECASE)
+        name_match = re.search(
+            r"(?:i am|i'm|my name is|call me)\s+([a-zA-Z0-9_-]{2,24})", clean, re.IGNORECASE
+        )
         if name_match:
             state.user_name = name_match.group(1)
             return f"Got it. You are {state.user_name}. That sounds suitably important."
 
-        interest_match = re.search(r"(?:i like|i love|i'm into|i am into)\s+(.+)", clean, re.IGNORECASE)
+        interest_match = re.search(
+            r"(?:i like|i love|i'm into|i am into)\s+(.+)", clean, re.IGNORECASE
+        )
         if interest_match:
             state.interests = self.parse_interests(interest_match.group(1))
             if state.interests:
@@ -83,7 +89,11 @@ class AssistantBrain:
                 "and act like I have been here all along."
             )
 
-        if "status" in lowered or "how are you" in lowered or "what do you know about me" in lowered:
+        if (
+            "status" in lowered
+            or "how are you" in lowered
+            or "what do you know about me" in lowered
+        ):
             return self.status_line(state)
 
         if "draw" in lowered or "picture" in lowered or "doodle" in lowered:
@@ -104,14 +114,22 @@ class AssistantBrain:
         return random.choice(self.jokes)
 
     def status_line(self, state: SessionState) -> str:
-        interests = self._format_interest_list(state.interests) if state.interests else "mysterious things"
+        interests = (
+            self._format_interest_list(state.interests) if state.interests else "mysterious things"
+        )
         return (
             f"You are {state.user_name}. I know you like {interests}. "
             f"We have chatted {len(state.conversation_history)} times, and I have interrupted the silence {state.autonomous_chats} times."
         )
 
     def random_autonomous_line(self, state: SessionState) -> str:
-        options = [self.tell_joke, self._interest_line, self._observation_line, self._question_line, self._doodle_line]
+        options = [
+            self.tell_joke,
+            self._interest_line,
+            self._observation_line,
+            self._question_line,
+            self._doodle_line,
+        ]
         line = random.choice(options)(state)
         state.autonomous_chats += 1
         return line

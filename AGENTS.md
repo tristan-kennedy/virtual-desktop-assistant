@@ -16,12 +16,16 @@ Agents working in this repo should preserve that framing.
 
 ## Code map
 
-- `main.py`: launches the app.
-- `src/app.py`: all Tkinter UI behavior.
-- `src/brain.py`: conversation logic, onboarding flow, autonomous chatter, and session state.
-- `src/models.py`: shared dataclasses for profile and runtime state.
-- `src/storage.py`: local profile persistence.
-- `packaging/windows/`: Windows packaging scripts and Inno Setup assets.
+- `main.py`: compatibility entry point that still launches the app.
+- `TODO.md`: temporary prioritized roadmap for future implementation work.
+- `docs/product-brief.md`: product intent, guardrails, and version scope.
+- `docs/rendering-decision.md`: long-term rendering stack and animation direction.
+- `src/dipsy_dolphin/ui/app.py`: all PySide6 UI behavior.
+- `src/dipsy_dolphin/core/brain.py`: conversation logic, onboarding flow, autonomous chatter, and session state.
+- `src/dipsy_dolphin/core/models.py`: shared dataclasses for profile and runtime state.
+- `src/dipsy_dolphin/storage/profile_store.py`: local profile persistence.
+- `scripts/windows_build.py`: Windows packaging orchestration.
+- `packaging/windows/`: Windows packaging shims and Inno Setup assets.
 - `docs/architecture.md`: architectural intent and extension notes.
 
 ## Working style
@@ -29,6 +33,8 @@ Agents working in this repo should preserve that framing.
 - Keep modules small and explicit.
 - Favor simple Python and standard library usage.
 - When adding features, separate UI code from assistant logic.
+- Keep packaging and CI files out of `src/`.
+- Use `TODO.md` as the default roadmap unless the user asks for a different priority.
 - Prefer deterministic logic for risk and state transitions.
 - Add tests for new non-trivial logic when practical.
 
@@ -52,7 +58,10 @@ Agents working in this repo should preserve that framing.
 ## Good first reads for an AI agent
 
 1. `README.md`
-2. `docs/architecture.md`
-3. `src/models.py`
-4. `src/brain.py`
-5. `src/app.py`
+2. `TODO.md`
+3. `docs/product-brief.md`
+4. `docs/rendering-decision.md`
+5. `docs/architecture.md`
+6. `src/dipsy_dolphin/core/models.py`
+7. `src/dipsy_dolphin/core/brain.py`
+8. `src/dipsy_dolphin/ui/app.py`

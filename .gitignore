@@ -7,12 +7,16 @@ __pycache__/
 venv/
 env/
 ENV/
+build/
+dist/
+*.egg-info/
 *.spec
 .artifacts/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 .idea/
 .vscode/

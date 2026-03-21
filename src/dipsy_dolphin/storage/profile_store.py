@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import UserProfile
+from ..core.models import UserProfile
 
 
 APP_DIR_NAME = "DipsyDolphin"
