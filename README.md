@@ -29,11 +29,11 @@ Near-term work should focus on personality, retro presentation, AI-backed conver
 
 ## Current structure
 
-- `src/dipsy_dolphin/` - installable application package.
-- `src/dipsy_dolphin/ui/app.py` - PySide6 window, animation, menus, and speech bubble behavior.
-- `src/dipsy_dolphin/core/brain.py` - scripted conversation, onboarding prompts, and autonomous chatter.
-- `src/dipsy_dolphin/core/models.py` and `src/dipsy_dolphin/storage/profile_store.py` - profile/session data and local persistence.
-- `src/dipsy_dolphin/audio/`, `src/dipsy_dolphin/llm/`, and `src/dipsy_dolphin/actions/` - reserved runtime packages for future expansion.
+- `dipsy_dolphin/` - installable application package.
+- `dipsy_dolphin/ui/app.py` - PySide6 window, animation, menus, and speech bubble behavior.
+- `dipsy_dolphin/core/brain.py` - scripted conversation, onboarding prompts, and autonomous chatter.
+- `dipsy_dolphin/core/models.py` and `dipsy_dolphin/storage/profile_store.py` - profile/session data and local persistence.
+- `dipsy_dolphin/audio/`, `dipsy_dolphin/llm/`, and `dipsy_dolphin/actions/` - reserved runtime packages for future expansion.
 - `scripts/` - repo-local Python tooling for packaging and release metadata.
 - `packaging/windows/` - Windows packaging shims, PyInstaller launcher, and the Inno Setup definition.
 - `.github/workflows/` - version-driven Windows release automation.
@@ -161,7 +161,7 @@ If you are using AI heavily in this repo, start with these files first:
 4. `docs/product-brief.md`
 5. `docs/rendering-decision.md`
 6. `docs/architecture.md`
-7. `src/dipsy_dolphin/core/brain.py`
-8. `src/dipsy_dolphin/ui/app.py`
+7. `dipsy_dolphin/core/brain.py`
+8. `dipsy_dolphin/ui/app.py`
 
 That order gives the project purpose, guardrails, architecture, rules, and implementation details before making changes.

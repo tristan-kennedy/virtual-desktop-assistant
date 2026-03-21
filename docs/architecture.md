@@ -26,12 +26,12 @@ Current runtime pieces:
 
 ## Runtime packages
 
-- `src/dipsy_dolphin/ui/` contains desktop presentation, movement, menus, bubble UI, and later settings screens, all built around PySide6.
-- `src/dipsy_dolphin/core/` contains runtime behavior, session state, scheduling, emotion, and character logic.
-- `src/dipsy_dolphin/storage/` contains persistence for profile, memory, logs, and permissions.
-- `src/dipsy_dolphin/audio/` is reserved for TTS, STT, and audio playback.
-- `src/dipsy_dolphin/llm/` is reserved for model providers, prompt assembly, and response shaping.
-- `src/dipsy_dolphin/actions/` is reserved for visible, consent-driven computer interactions.
+- `dipsy_dolphin/ui/` contains desktop presentation, movement, menus, bubble UI, and later settings screens, all built around PySide6.
+- `dipsy_dolphin/core/` contains runtime behavior, session state, scheduling, emotion, and character logic.
+- `dipsy_dolphin/storage/` contains persistence for profile, memory, logs, and permissions.
+- `dipsy_dolphin/audio/` is reserved for TTS, STT, and audio playback.
+- `dipsy_dolphin/llm/` is reserved for model providers, prompt assembly, and response shaping.
+- `dipsy_dolphin/actions/` is reserved for visible, consent-driven computer interactions.
 
 ## Design principles
 
@@ -50,7 +50,7 @@ Current runtime pieces:
 
 ## Repository shape
 
-- Keep installable runtime code in `src/dipsy_dolphin/`.
+- Keep installable runtime code in `dipsy_dolphin/`.
 - Keep packaging logic in `packaging/windows/`.
 - Keep repo-local packaging and release tooling in `scripts/`.
 - Keep generated build output in ignored `.artifacts/` folders.
@@ -61,15 +61,15 @@ Current runtime pieces:
 
 If the project expands, keep this direction:
 
-- Add `src/dipsy_dolphin/config.py` for colors, timing, and copy constants.
-- Add concrete modules inside `src/dipsy_dolphin/llm/`, `src/dipsy_dolphin/audio/`, and `src/dipsy_dolphin/actions/` instead of crowding the root package.
-- Grow `src/dipsy_dolphin/ui/` into a fuller PySide6 renderer once the character presentation layer is ready.
+- Add `dipsy_dolphin/config.py` for colors, timing, and copy constants.
+- Add concrete modules inside `dipsy_dolphin/llm/`, `dipsy_dolphin/audio/`, and `dipsy_dolphin/actions/` instead of crowding the root package.
+- Grow `dipsy_dolphin/ui/` into a fuller PySide6 renderer once the character presentation layer is ready.
 - Add automated coverage for conversation, onboarding, and storage behavior when the project needs it.
 - Add `docs/decisions/` for major architectural choices.
 
 ## Testing priorities
 
-The first logic worth testing lives in `src/dipsy_dolphin/core/brain.py` and `src/dipsy_dolphin/storage/profile_store.py`:
+The first logic worth testing lives in `dipsy_dolphin/core/brain.py` and `dipsy_dolphin/storage/profile_store.py`:
 
 - onboarding parsing behavior
 - session summary generation

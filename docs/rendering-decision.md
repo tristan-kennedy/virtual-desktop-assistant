@@ -115,9 +115,9 @@ Suggested metadata fields:
 
 This decision affects the runtime package design.
 
-- `src/dipsy_dolphin/ui/` should remain the home for rendering, windows, bubble UI, menus, and later settings.
+- `dipsy_dolphin/ui/` should remain the home for rendering, windows, bubble UI, menus, and later settings.
 - The actual renderer should become a dedicated PySide6-oriented UI component rather than being mixed into behavior logic.
-- `src/dipsy_dolphin/core/` should never depend on specific frame files or rendering tricks.
+- `dipsy_dolphin/core/` should never depend on specific frame files or rendering tricks.
 - Behavior, emotion, LLM, and action code should communicate through named states, not direct frame manipulation.
 
 That means the correct dependency direction is:
