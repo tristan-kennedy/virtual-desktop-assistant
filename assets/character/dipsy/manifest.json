@@ -1,0 +1,36 @@
+{
+  "character_id": "dipsy",
+  "style_variant": "flat-retro",
+  "future_style_variant": "faux-3d",
+  "fallback_draw_mode": "vector",
+  "canvas_size": {
+    "width": 200,
+    "height": 220
+  },
+  "anchors": {
+    "bubble": [154, 54],
+    "feet": [104, 194],
+    "look": [104, 74]
+  },
+  "layer_order": [
+    "shadow",
+    "tail",
+    "body",
+    "head",
+    "face",
+    "mouth",
+    "badge",
+    "fx"
+  ],
+  "supported": {
+    "poses": ["idle", "walk", "talk", "think"],
+    "expressions": ["neutral", "happy", "concerned"],
+    "eye_states": ["open", "blink"],
+    "mouth_states": ["closed", "talk_open"],
+    "effects": ["question", "spark", "sweat"]
+  },
+  "notes": {
+    "current_pass": "Flat stylized vector fallback to prove the presentation layer.",
+    "future_direction": "Swap layer slots to faux-3d-friendly sprite sequences without changing semantic state names."
+  }
+}
