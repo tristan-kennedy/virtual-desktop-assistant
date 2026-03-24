@@ -36,7 +36,7 @@ Build the Windows setup wizard with:
 uv run python -m scripts.windows_build installer --clean
 ```
 
-For the bundled local-model installer, download the model payload and runtime first:
+If you want to stage the bundled local-model payload ahead of time, you can still run:
 
 ```powershell
 uv run python -m scripts.windows_build model-bundle
@@ -51,7 +51,8 @@ uv run python -m scripts.windows_build installer --clean
 Notes:
 
 - The installer build first creates the app bundle unless `--skip-app-build` is supplied
-- Bundled local-model installers require the model and runtime prepared with `model-bundle`
+- The installer command now prepares the model bundle and llama.cpp runtime automatically if they are missing
+- `model-bundle` is still useful if you want to prefetch those assets before the installer step
 - The app build uses `uv.lock`, so packaging stays reproducible across local and CI runs
 - You can override the Python version used for packaging with `--python-version`
 - Inno Setup 6 must be installed so `ISCC.exe` is available

@@ -229,6 +229,21 @@ def build_model_bundle(*, clean: bool, python_version: str | None) -> Path:
     return bundle_root
 
 
+def ensure_model_bundle(*, clean: bool, python_version: str | None) -> Path:
+    bundle = DEFAULT_MODEL_BUNDLE
+    bundle_root = MODEL_BUNDLES_ROOT / "default"
+    model_source_dir = bundle_root / "models"
+    runtime_source_dir = RUNTIME_BUNDLE_ROOT
+
+    if model_source_dir.exists() and runtime_source_dir.exists():
+        return bundle_root
+
+    print(
+        f"Preparing bundled model payload for installer because '{bundle.display_name}' is not fully present yet."
+    )
+    return build_model_bundle(clean=clean, python_version=python_version)
+
+
 def _download_runtime_bundle(*, clean: bool) -> Path:
     runtime_root = RUNTIME_BUNDLE_ROOT
     downloads_dir = runtime_root / "downloads"
@@ -278,16 +293,16 @@ def build_installer(
     if not APP_BUNDLE_PATH.exists():
         raise RuntimeError(f"App bundle not found at {APP_BUNDLE_PATH}")
 
+    ensure_model_bundle(clean=clean, python_version=python_version)
+
     if not model_source_dir.exists():
         raise RuntimeError(
-            f"Model bundle for '{bundle.display_name}' not found at {model_source_dir}. "
-            "Run 'uv run python -m scripts.windows_build model-bundle' first."
+            f"Model bundle for '{bundle.display_name}' was expected at {model_source_dir}, but it is still missing after preparation."
         )
 
     if not runtime_source_dir.exists():
         raise RuntimeError(
-            f"Bundled llama.cpp runtime not found at {runtime_source_dir}. "
-            "Run 'uv run python -m scripts.windows_build model-bundle' first."
+            f"Bundled llama.cpp runtime was expected at {runtime_source_dir}, but it is still missing after preparation."
         )
 
     if clean:

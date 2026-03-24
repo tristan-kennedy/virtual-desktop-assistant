@@ -108,6 +108,8 @@ Build the installer:
 uv run python -m scripts.windows_build installer --clean
 ```
 
+The installer command now prepares the bundled model payload and llama.cpp runtime automatically if they are missing, which keeps local packaging and GitHub Actions aligned.
+
 If you prefer Windows-native wrappers, `packaging/windows/build-app.ps1` and `packaging/windows/build-installer.ps1` remain thin shims around the Python tooling.
 
 If Inno Setup is not installed yet, one option is:
