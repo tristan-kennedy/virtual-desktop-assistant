@@ -12,11 +12,14 @@ def test_parse_interests_normalizes_and_limits_entries() -> None:
     assert interests == ["games", "music", "coding", "movies", "books"]
 
 
-def test_handle_user_message_updates_name_from_intro_phrase() -> None:
+def test_apply_profile_updates_marks_profile_as_configured() -> None:
     brain = AssistantBrain()
     state = SessionState()
 
-    reply = brain.handle_user_message("Hi, call me Taylor", state)
+    updated = brain.apply_profile_updates("Hi, call me Taylor and I like coding, music", state)
 
+    assert updated is True
     assert state.user_name == "Taylor"
-    assert "Taylor" in reply
+    assert state.interests == ["coding", "music"]
+    assert state.profile.has_met_user is True
+    assert state.onboarding_complete is True

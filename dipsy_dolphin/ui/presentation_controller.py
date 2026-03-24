@@ -7,8 +7,7 @@ from .presentation_models import CharacterPresentation
 
 @dataclass
 class PresentationSceneState:
-    movement_pose: str = "idle"
-    focus_pose: Optional[str] = None
+    animation_state: str = "idle"
     speech_style: Optional[str] = None
     facing: str = "right"
     extra_effects: Tuple[str, ...] = field(default_factory=tuple)
@@ -19,53 +18,66 @@ class PresentationController:
         self.manifest = load_character_manifest()
         self.state = PresentationSceneState()
 
-    def set_idle(self, delta_x: float = 0) -> None:
-        self.state.movement_pose = "idle"
-        self.state.focus_pose = None
+    def set_animation_state(self, state: str, delta_x: float = 0) -> None:
+        self.state.animation_state = state
         self._set_facing_from_delta(delta_x)
 
-    def set_walking(self, delta_x: float) -> None:
-        self.state.movement_pose = "walk"
-        self.state.focus_pose = None
-        self._set_facing_from_delta(delta_x)
-
-    def set_thinking(self, delta_x: float = 0) -> None:
-        self.state.focus_pose = "think"
-        self._set_facing_from_delta(delta_x)
-
-    def start_speech(self, style: str = "normal") -> None:
+    def set_speech_style(self, style: Optional[str]) -> None:
         self.state.speech_style = style
-        self.state.focus_pose = None
 
-    def stop_speech(self) -> None:
-        self.state.speech_style = None
+    def set_facing(self, facing: str) -> None:
+        self.state.facing = facing
+
+    def set_extra_effects(self, effects: Tuple[str, ...]) -> None:
+        self.state.extra_effects = effects
 
     def resolve(self) -> CharacterPresentation:
-        pose_id = self.state.movement_pose
-        if self.state.focus_pose == "think":
-            pose_id = "think"
-        if self.state.speech_style:
-            pose_id = "talk"
-
+        pose_id = self.state.animation_state
         expression_id = "neutral"
         active_effects = list(self.state.extra_effects)
+        mouth_state = "closed"
+
+        if pose_id == "walk":
+            expression_id = "happy"
+        elif pose_id == "think":
+            expression_id = "concerned"
+            active_effects.append("question")
+        elif pose_id == "laugh":
+            expression_id = "happy"
+            mouth_state = "talk_open"
+            active_effects.append("spark")
+        elif pose_id == "surprised":
+            expression_id = "concerned"
+            mouth_state = "talk_open"
+            active_effects.append("question")
+        elif pose_id == "sad":
+            expression_id = "concerned"
+        elif pose_id == "excited":
+            expression_id = "happy"
+            mouth_state = "talk_open"
+            active_effects.append("spark")
+        elif pose_id == "talk":
+            mouth_state = "talk_open"
 
         if self.state.speech_style in {"joke", "spark"}:
             expression_id = "happy"
             active_effects.append("spark")
+            if pose_id == "idle":
+                pose_id = "talk"
+                mouth_state = "talk_open"
         elif self.state.speech_style in {"question", "onboarding"}:
             expression_id = "concerned"
             active_effects.append("question")
+            if pose_id == "idle":
+                pose_id = "surprised"
+                mouth_state = "talk_open"
         elif self.state.speech_style == "alert":
             expression_id = "concerned"
             active_effects.append("sweat")
-        elif pose_id == "think":
-            expression_id = "concerned"
-            active_effects.append("question")
-        elif self.state.movement_pose == "walk":
-            expression_id = "happy"
+            if pose_id == "idle":
+                pose_id = "surprised"
+                mouth_state = "talk_open"
 
-        mouth_state = "talk_open" if pose_id == "talk" else "closed"
         return CharacterPresentation(
             pose_id=pose_id,
             expression_id=expression_id,
@@ -75,6 +87,22 @@ class PresentationController:
             active_effects=tuple(dict.fromkeys(active_effects)),
             style_variant=self.manifest.style_variant,
         )
+
+    def set_idle(self, delta_x: float = 0) -> None:
+        self.set_animation_state("idle", delta_x)
+
+    def set_walking(self, delta_x: float) -> None:
+        self.set_animation_state("walk", delta_x)
+
+    def set_thinking(self, delta_x: float = 0) -> None:
+        self.set_animation_state("think", delta_x)
+
+    def start_speech(self, style: str = "normal") -> None:
+        self.set_animation_state("talk")
+        self.set_speech_style(style)
+
+    def stop_speech(self) -> None:
+        self.set_speech_style(None)
 
     def _set_facing_from_delta(self, delta_x: float) -> None:
         if delta_x > 1:

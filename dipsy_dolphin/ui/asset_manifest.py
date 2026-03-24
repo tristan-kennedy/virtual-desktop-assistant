@@ -77,7 +77,7 @@ def _default_manifest(character_id: str) -> CharacterAssetManifest:
         ),
         layer_order=("shadow", "tail", "body", "head", "face", "mouth", "badge", "fx"),
         supported_states={
-            "poses": ("idle", "walk", "talk", "think"),
+            "poses": ("idle", "walk", "talk", "think", "laugh", "surprised", "sad", "excited"),
             "expressions": ("neutral", "happy", "concerned"),
             "eye_states": ("open", "blink"),
             "mouth_states": ("closed", "talk_open"),

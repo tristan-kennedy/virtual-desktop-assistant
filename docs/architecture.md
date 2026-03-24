@@ -2,82 +2,92 @@
 
 ## Overview
 
-Dipsy Dolphin is currently a single-process desktop prototype with a small runtime architecture.
-The active desktop shell uses PySide6 and the rendering direction is sprite-based animation as documented in `docs/rendering-decision.md`.
+Dipsy Dolphin is a single-process desktop app with an LLM-first runtime.
 
-Current runtime pieces:
-
-- `main.py` starts the application.
-- `dipsy_dolphin.ui.app.AssistantApp` owns windows, menus, drawing, motion, dialogs, and profile persistence hooks.
-- `dipsy_dolphin.core.brain.AssistantBrain` owns chat replies, onboarding prompts, and autonomous character lines.
-- `dipsy_dolphin.core.models` defines shared dataclasses for profile and session state.
-- `dipsy_dolphin.storage.profile_store.ProfileStore` reads and writes local profile data.
-- `scripts.windows_build` owns packaging orchestration, while `packaging/windows/` holds launchers and installer assets.
+The active desktop shell uses PySide6 and the rendering direction is sprite-style presentation as documented in `docs/rendering-decision.md`. The UI asks a bundled local LLM what Dipsy should do, validates the model response, and then applies either presentation changes or execution through explicit runtime interfaces.
 
 ## Runtime flow
 
-1. The console entrypoint runs `dipsy_dolphin.ui.app.run()`.
-2. `AssistantApp` creates the pet window and UI bindings.
-3. The app loads a persisted `UserProfile` from `%LOCALAPPDATA%` when available.
-4. The app creates a fresh `SessionState` and `AssistantBrain` around that profile.
-5. Dipsy asks for the user's name and interests at startup if no profile exists yet.
-6. User actions or idle timers trigger chat, jokes, status, and autonomous blurts.
-7. `AssistantBrain` updates the session state and the app saves profile changes when needed.
+1. `dipsy_dolphin.__main__` runs `dipsy_dolphin.ui.app.run()`.
+2. `dipsy_dolphin.ui.app.AssistantApp` creates the pet window, bubble UI, timers, and menus.
+3. The app loads a `UserProfile` from `%LOCALAPPDATA%` through `dipsy_dolphin.storage.profile_store.ProfileStore`.
+4. The app creates a fresh `SessionState` and an `AssistantController`.
+5. `AssistantController` builds a system prompt and event payload through `dipsy_dolphin.llm.prompt_builder`.
+6. `dipsy_dolphin.llm.local_provider.LocalLlamaProvider` locates the bundled model and llama.cpp runtime, starts the local server if needed, and requests a response.
+7. `dipsy_dolphin.llm.response_parser` extracts and sanitizes the JSON into an `AssistantTurn`.
+8. `dipsy_dolphin.actions.registry` validates any requested action id against the current tool registry.
+9. `AssistantApp` applies the returned speech, animation, and any execution result to the UI and persists profile updates when needed.
 
-## Runtime packages
+## Runtime modules
 
-- `dipsy_dolphin/ui/` contains desktop presentation, movement, menus, bubble UI, and later settings screens, all built around PySide6.
-- `dipsy_dolphin/core/` contains runtime behavior, session state, scheduling, emotion, and character logic.
-- `dipsy_dolphin/storage/` contains persistence for profile, memory, logs, and permissions.
-- `dipsy_dolphin/audio/` is reserved for TTS, STT, and audio playback.
-- `dipsy_dolphin/llm/` is reserved for model providers, prompt assembly, and response shaping.
-- `dipsy_dolphin/actions/` is reserved for visible, consent-driven computer interactions.
+### UI host
+
+- `dipsy_dolphin/ui/app.py` owns the PySide6 shell, request lifecycle, onboarding dialogs, movement, bubble timing, and timer-driven autonomous turns.
+- `dipsy_dolphin/ui/animation_state_machine.py` tracks active animation state, priorities, and cooldowns.
+- `dipsy_dolphin/ui/presentation_controller.py` maps controller output into render-friendly presentation values.
+- `dipsy_dolphin/ui/character_widget.py`, `dipsy_dolphin/ui/character_renderer.py`, and `dipsy_dolphin/ui/asset_manifest.py` render the character and expose layout anchors.
+
+### Decision layer
+
+- `dipsy_dolphin/core/controller.py` is the main runtime coordinator.
+- `dipsy_dolphin/core/controller_models.py` defines the structured turn contract used between the controller and UI.
+- `dipsy_dolphin/core/brain.py` is now intentionally small: it parses profile facts from user text and resets state. It is not the main conversation engine.
+- `dipsy_dolphin/core/models.py` defines shared user/session dataclasses.
+
+### LLM contract
+
+- `dipsy_dolphin/llm/prompt_builder.py` defines the prompt contract and event-specific instructions.
+- `dipsy_dolphin/llm/response_parser.py` turns raw model output into validated structured data.
+- `dipsy_dolphin/llm/provider.py` defines the provider protocol.
+- `dipsy_dolphin/llm/local_provider.py` implements the bundled local provider.
+- `dipsy_dolphin/llm/config.py`, `dipsy_dolphin/llm/model_catalog.py`, and `dipsy_dolphin/llm/runtime_catalog.py` define discovery and bundle metadata.
+
+### Function and action interface
+
+- `dipsy_dolphin/actions/registry.py` is the current source of truth for action ids and sanitization.
+- This registry is the bootstrap version of a broader function and tool execution surface.
+- Model output should continue flowing through structured runtime contracts rather than ad-hoc string execution.
+
+### Persistence and packaging
+
+- `dipsy_dolphin/storage/profile_store.py` currently handles local profile persistence.
+- `scripts/windows_build.py` owns packaging, model download, runtime download, and installer orchestration.
+- `packaging/windows/` contains launchers and Inno Setup assets.
 
 ## Design principles
 
-- Safe by default: visible assistant behavior only.
-- Small surface area: minimal files and explicit responsibilities.
-- UI and decision logic separated enough for future testing.
-- Easy for humans and AI tools to navigate quickly.
-- Keep rendering decisions documented and separate from core behavior code.
-
-## Rendering direction
-
-- Active UI stack: `PySide6`
-- Visual strategy: 2D sprite sheets or frame sequences, not live 3D rendering
-- Core logic should emit named states and intents, while the UI layer chooses animations and playback
-- The current PySide6 shell is still a prototype renderer and should evolve toward a more explicit sprite-based presentation layer
+- LLM-first: use a local model for the core brain and keep the hot path explicit.
+- Visible behavior: Dipsy should remain theatrical on screen even as execution grows.
+- Small explicit modules: keep the hot path readable for both humans and AI tools.
+- Clear dependency direction: controller decides intent, UI decides presentation, renderer decides pixels.
+- Explicit interfaces: computer capability should flow through well-defined action or function contracts.
 
 ## Repository shape
 
 - Keep installable runtime code in `dipsy_dolphin/`.
 - Keep packaging logic in `packaging/windows/`.
-- Keep repo-local packaging and release tooling in `scripts/`.
+- Keep repo-local tooling in `scripts/`.
 - Keep generated build output in ignored `.artifacts/` folders.
-- Keep process and design notes in `docs/`.
-- Keep the root small so entry points are obvious.
+- Keep design notes in `docs/`.
 
 ## Recommended growth path
 
-If the project expands, keep this direction:
-
-- Add `dipsy_dolphin/config.py` for colors, timing, and copy constants.
-- Add concrete modules inside `dipsy_dolphin/llm/`, `dipsy_dolphin/audio/`, and `dipsy_dolphin/actions/` instead of crowding the root package.
-- Grow `dipsy_dolphin/ui/` into a fuller PySide6 renderer once the character presentation layer is ready.
-- Add automated coverage for conversation, onboarding, and storage behavior when the project needs it.
-- Add `docs/decisions/` for major architectural choices.
+- Add an emotion or mood layer inside `dipsy_dolphin/core/` that feeds animation and dialogue style.
+- Add a better autonomous behavior scheduler instead of simple cooldown timing.
+- Expand storage carefully for memory, settings, tool history, and execution state when those systems land.
+- Grow `dipsy_dolphin/actions/` from the current registry into a fuller function and tool execution layer.
+- Add `docs/decisions/` if the architecture starts gaining more major irreversible choices.
 
 ## Testing priorities
 
-The first logic worth testing lives in `dipsy_dolphin/core/brain.py` and `dipsy_dolphin/storage/profile_store.py`:
+The most valuable non-UI contracts right now are:
 
-- onboarding parsing behavior
-- session summary generation
-- reset behavior
-- autonomous chatter selection
-- profile load/save behavior
-- response handling for common chat inputs
+- controller behavior and required-turn guardrails in `tests/test_controller.py`
+- prompt and parsing contract behavior in `tests/test_response_parser.py`
+- model discovery rules in `tests/test_llm_config.py`
+- presentation state rules in `tests/test_animation_state_machine.py` and `tests/test_presentation_controller.py`
+- profile persistence and profile parsing helpers in `tests/test_profile_store.py` and `tests/test_brain.py`
 
 ## Safety note
 
-This repository should remain a visible assistant. If future work introduces any real system integration, document it clearly, gate it behind explicit consent, and keep it separate from the character and chat layers.
+This repository should remain a visible assistant. As computer actions arrive, keep them routed through explicit interfaces and keep the action layer separate from the character and chat layers.

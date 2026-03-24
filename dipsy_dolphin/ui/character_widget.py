@@ -77,6 +77,10 @@ class CharacterWidget(QWidget):
             "walk": (0, 3, 0, -2),
             "talk": (0, 1, 0, -1),
             "think": (0, 0, 1, 0, -1),
+            "laugh": (0, 2, 1, -1, -2),
+            "surprised": (-1, 1, 0, 1),
+            "sad": (0, 0, -1, 0),
+            "excited": (0, 2, 0, -2),
         }
         pattern = patterns.get(pose_id, (0,))
         return pattern[self._animation_tick % len(pattern)]

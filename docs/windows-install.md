@@ -9,6 +9,8 @@ Dipsy Dolphin uses a simple two-step Windows packaging flow.
 - `pyproject.toml` and `uv.lock` are the source of truth for dependencies and release versioning
 - Profile data is stored in `%LOCALAPPDATA%\DipsyDolphin\data\profile.json`
 - The installer registers a normal Windows uninstaller for the current user
+- Bundled local-model payloads are staged under `.artifacts\windows\model-bundles\default` before installer creation
+- The bundled llama.cpp runtime is staged under `.artifacts\windows\llama-runtime`
 
 ## Local build
 
@@ -16,6 +18,12 @@ Build the Windows app bundle with:
 
 ```powershell
 uv run python -m scripts.windows_build app --clean
+```
+
+To include the embedded local LLM runtime in the app bundle, add:
+
+```powershell
+uv run python -m scripts.windows_build app --clean --include-llm-runtime
 ```
 
 That command uses `uv` to install the pinned Python version, sync a locked build environment in `.artifacts\windows\.venv-build`, and write the packaged app bundle to `.artifacts\windows\pyinstaller\dist\DipsyDolphin`.
@@ -28,9 +36,22 @@ Build the Windows setup wizard with:
 uv run python -m scripts.windows_build installer --clean
 ```
 
+For the bundled local-model installer, download the model payload and runtime first:
+
+```powershell
+uv run python -m scripts.windows_build model-bundle
+```
+
+Then build the installer:
+
+```powershell
+uv run python -m scripts.windows_build installer --clean
+```
+
 Notes:
 
 - The installer build first creates the app bundle unless `--skip-app-build` is supplied
+- Bundled local-model installers require the model and runtime prepared with `model-bundle`
 - The app build uses `uv.lock`, so packaging stays reproducible across local and CI runs
 - You can override the Python version used for packaging with `--python-version`
 - Inno Setup 6 must be installed so `ISCC.exe` is available
@@ -50,7 +71,13 @@ For day-to-day development, let `uv` manage the local project environment:
 
 ```powershell
 uv python install
-uv sync
+uv sync --group local-llm
+```
+
+Then download the required local model bundle and runtime:
+
+```powershell
+uv run python -m scripts.windows_build model-bundle
 ```
 
 Then run:
@@ -58,6 +85,8 @@ Then run:
 ```powershell
 uv run dipsy-dolphin
 ```
+
+The app now requires a local bundled model and the bundled llama.cpp runtime to start. The `model-bundle` command stages both automatically during development. If you manage model files manually instead, place them under `.artifacts\local-models\default\` using the filename declared in `dipsy_dolphin/llm/model_catalog.py`.
 
 Common dependency commands:
 

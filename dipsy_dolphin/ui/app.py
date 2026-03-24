@@ -1,9 +1,18 @@
+from concurrent.futures import Future, ThreadPoolExecutor
+import copy
+import os
+from dataclasses import dataclass
 import math
 import random
+import signal
 import sys
-from typing import Optional
+import time
+from typing import Callable, Optional
 
-from PySide6.QtCore import QPoint, Qt, QTimer
+if sys.platform == "win32":
+    import ctypes
+
+from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QFont, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -11,13 +20,16 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMenu,
+    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
 
-from ..core.brain import AssistantBrain
+from ..core.controller import AssistantController
+from ..core.controller_models import AssistantTurn, ControllerResult
 from ..core.models import SessionState
 from ..storage.profile_store import ProfileStore
+from .animation_state_machine import AnimationStateMachine
 from .character_widget import CharacterWidget
 from .presentation_controller import PresentationController
 
@@ -51,7 +63,8 @@ class BubbleWindow(QWidget):
 
         self.label = QLabel()
         self.label.setWordWrap(True)
-        self.label.setFixedWidth(280)
+        self.label.setMinimumWidth(220)
+        self.label.setMaximumWidth(420)
         self.label.setStyleSheet("color: #102226;")
         self.label.setFont(QFont("Segoe UI", 10))
         frame_layout.addWidget(self.label)
@@ -59,9 +72,35 @@ class BubbleWindow(QWidget):
         layout.addWidget(frame)
 
     def show_text(self, text: str) -> None:
+        self.ensurePolished()
+        self.label.setFixedWidth(self._target_label_width(text))
         self.label.setText(text)
         self.label.adjustSize()
+        self.updateGeometry()
         self.adjustSize()
+        self.resize(self.sizeHint())
+
+    def _target_label_width(self, text: str) -> int:
+        length = len(text.strip())
+        if length <= 50:
+            return 240
+        if length <= 110:
+            return 300
+        if length <= 180:
+            return 360
+        return 420
+
+
+class ControllerTaskBridge(QObject):
+    completed = Signal(object)
+    failed = Signal(str)
+
+
+@dataclass
+class PendingControllerRequest:
+    name: str
+    on_result: Callable[[ControllerResult], None]
+    show_progress: bool
 
 
 class AssistantApp(QWidget):
@@ -78,15 +117,21 @@ class AssistantApp(QWidget):
 
         self.dragging = False
         self.drag_offset = QPoint()
-        self.wandering_enabled = True
+        self.walk_active = False
         self.walk_target_x = 100
         self.walk_target_y = 100
         self.onboarding_active = False
+        self._closing = False
+        self._runtime_shutdown = False
+        self._pending_request: PendingControllerRequest | None = None
+        self._request_counter = 0
+        self.current_speech_style: Optional[str] = None
 
-        self.brain = AssistantBrain()
+        self.controller = AssistantController()
         self.profile_store = profile_store or ProfileStore()
         self.session = SessionState(profile=self.profile_store.load_profile())
 
+        self.animation_state_machine = AnimationStateMachine()
         self.presentation_controller = PresentationController()
         self.character_widget = CharacterWidget(self)
         bounds = self.character_widget.character_bounds()
@@ -98,6 +143,15 @@ class AssistantApp(QWidget):
         self.bubble_hide_timer = QTimer(self)
         self.bubble_hide_timer.setSingleShot(True)
         self.bubble_hide_timer.timeout.connect(self._on_bubble_timeout)
+        self._llm_progress_timer = QTimer(self)
+        self._llm_progress_timer.setSingleShot(True)
+        self._llm_progress_timer.timeout.connect(self._on_llm_progress_timeout)
+        self._controller_task_bridge = ControllerTaskBridge(self)
+        self._controller_task_bridge.completed.connect(self._on_controller_task_completed)
+        self._controller_task_bridge.failed.connect(self._on_controller_task_failed)
+        self._controller_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="dipsy-llm"
+        )
 
         self.menu = QMenu(self)
         self.menu.setStyleSheet(
@@ -116,9 +170,10 @@ class AssistantApp(QWidget):
         self.keep_on_top_timer = QTimer(self)
         self.keep_on_top_timer.timeout.connect(self._keep_on_top_tick)
 
-        self._apply_presentation()
         self._position_initially()
-        self._choose_new_target()
+        self.walk_target_x = self.x()
+        self.walk_target_y = self.y()
+        self._apply_presentation()
         self._seed_intro()
 
         if not self.session.onboarding_complete:
@@ -151,9 +206,9 @@ class AssistantApp(QWidget):
 
         self.menu.addSeparator()
 
-        self.toggle_wandering_action = QAction("Pause Walking", self)
-        self.toggle_wandering_action.triggered.connect(self._toggle_wandering)
-        self.menu.addAction(self.toggle_wandering_action)
+        roam_action = QAction("Roam Somewhere", self)
+        roam_action.triggered.connect(self._start_walk_action)
+        self.menu.addAction(roam_action)
 
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self._quit)
@@ -177,109 +232,340 @@ class AssistantApp(QWidget):
         start_y = max(screen_top + 16, screen_bottom - self.height() - 96)
         self.move(start_x, start_y)
 
+    def _now_ms(self) -> int:
+        return time.monotonic_ns() // 1_000_000
+
     def _seed_intro(self) -> None:
-        style = "status" if self.session.onboarding_complete else "onboarding"
-        self._speak(self.brain.startup_line(self.session), duration_ms=7000, style=style)
+        self._submit_controller_task(
+            "startup",
+            lambda session=copy.deepcopy(self.session): self.controller.startup_turn(session),
+            lambda result: self._perform_controller_result(result),
+        )
 
     def _persist_profile(self) -> None:
         self.profile_store.save_profile(self.session.profile)
 
     def _apply_presentation(self) -> None:
+        self.presentation_controller.set_animation_state(
+            self.animation_state_machine.current_state(self._now_ms())
+        )
+        self.presentation_controller.set_facing(self.animation_state_machine.facing)
+        self.presentation_controller.set_speech_style(self.current_speech_style)
         self.character_widget.set_presentation(self.presentation_controller.resolve())
+
+    def _request_animation(
+        self, state: str, duration_ms: Optional[int] = None, force: bool = False
+    ) -> None:
+        now_ms = self._now_ms()
+        accepted = self.animation_state_machine.request_state(
+            state,
+            now_ms,
+            duration_ms=duration_ms,
+            force=force,
+        )
+        if not accepted and state != "talk":
+            self.animation_state_machine.request_state(
+                "talk",
+                now_ms,
+                duration_ms=duration_ms,
+                force=True,
+            )
+        self._apply_presentation()
+
+    def _clear_animation_overlay(self) -> None:
+        self.animation_state_machine.clear_active_state(self._now_ms(), force=True)
+
+    def _perform_controller_result(
+        self, result: ControllerResult, schedule_idle: bool = False
+    ) -> None:
+        self._perform_turn(result.turn, schedule_idle=schedule_idle)
+
+    def _debug_log(self, message: str) -> None:
+        print(f"[Dipsy] {message}")
+
+    def _apply_session_state(self, next_state: SessionState | None) -> None:
+        if next_state is None:
+            return
+        self.session = next_state
+
+    def _submit_controller_task(
+        self,
+        label: str,
+        task: Callable[[], ControllerResult],
+        on_result: Callable[[ControllerResult], None],
+        *,
+        show_thinking: bool = True,
+    ) -> bool:
+        if self._closing or self._pending_request is not None:
+            return False
+
+        self._request_counter += 1
+        self._pending_request = PendingControllerRequest(
+            name=label,
+            on_result=on_result,
+            show_progress=show_thinking,
+        )
+        self.bubble_hide_timer.stop()
+        self._llm_progress_timer.stop()
+        self.bubble_window.hide()
+        self.current_speech_style = None
+        self._clear_animation_overlay()
+        if show_thinking:
+            self._request_animation("think", duration_ms=1600, force=True)
+            self._llm_progress_timer.start(2500)
+        self._debug_log(f"request#{self._request_counter} submitted: {label}")
+
+        future = self._controller_executor.submit(task)
+        future.add_done_callback(self._forward_controller_future)
+        return True
+
+    def _forward_controller_future(self, future: Future[ControllerResult]) -> None:
+        try:
+            result = future.result()
+        except Exception as exc:
+            self._controller_task_bridge.failed.emit(str(exc))
+            return
+
+        self._controller_task_bridge.completed.emit(result)
+
+    def _on_controller_task_completed(self, result: ControllerResult) -> None:
+        if self._closing:
+            return
+
+        pending_request = self._pending_request
+        if pending_request is None:
+            return
+
+        self._pending_request = None
+        self._llm_progress_timer.stop()
+        self._apply_session_state(result.session_state)
+        self._debug_log(
+            f"completed: {pending_request.name} -> say={bool(result.turn.say)} action={getattr(result.turn.action, 'action_id', None)} animation={result.turn.animation}"
+        )
+
+        pending_request.on_result(result)
+
+    def _on_controller_task_failed(self, message: str) -> None:
+        if self._closing:
+            return
+
+        request_name = (
+            self._pending_request.name if self._pending_request is not None else "request"
+        )
+        self._pending_request = None
+        self._llm_progress_timer.stop()
+        self.current_speech_style = None
+        if request_name.startswith("onboarding"):
+            self.onboarding_active = False
+        self._debug_log(f"failed: {request_name} -> {message}")
+        self._clear_animation_overlay()
+        self._sync_presentation_to_motion()
+        QMessageBox.critical(
+            self,
+            "Dipsy Dolphin",
+            f"The local brain failed during {request_name}.\n\n{message}",
+        )
+
+    def _on_llm_progress_timeout(self) -> None:
+        if self._pending_request is None or not self._pending_request.show_progress:
+            return
+        self.bubble_window.show_text("Thinking...")
+        self._position_bubble()
+        self.bubble_window.show()
+        self.bubble_window.raise_()
+
+    def _show_busy_note(self) -> None:
+        self._speak(
+            "One thought at a time. I am still working on the last one.",
+            duration_ms=2600,
+            style="alert",
+        )
+
+    def _perform_turn(self, turn: AssistantTurn, schedule_idle: bool = False) -> None:
+        self._debug_log(
+            f"apply turn: say={turn.say!r} animation={turn.animation} action={getattr(turn.action, 'action_id', None)} cooldown={turn.cooldown_ms}"
+        )
+        if turn.action and turn.action.action_id == "roam_somewhere":
+            self._start_walk_action()
+
+        if turn.say:
+            self._speak(
+                turn.say,
+                duration_ms=self._duration_for_line(turn.say, turn.speech_style),
+                style=turn.speech_style,
+            )
+        elif turn.animation not in {"idle", "walk"}:
+            self._request_animation(turn.animation, duration_ms=1800, force=True)
+        else:
+            self._sync_presentation_to_motion()
+
+        if schedule_idle:
+            self._schedule_idle_chatter(turn.cooldown_ms)
+
+    def _duration_for_line(self, text: str, style: str) -> int:
+        words = max(1, len(text.split()))
+        base = 3200 + words * 360
+        base += min(9000, len(text) * 16)
+        if style in {"status", "onboarding"}:
+            base += 1200
+        return max(3800, min(40000, base))
+
+    def _speech_animation_state(self, style: str) -> str:
+        if style == "joke":
+            return "laugh"
+        if style == "spark":
+            return "excited"
+        if style in {"question", "onboarding", "alert"}:
+            return "surprised"
+        return "talk"
 
     def _start_onboarding(self) -> None:
         if self.session.onboarding_complete or self.onboarding_active:
             return
 
+        if self._pending_request is not None:
+            QTimer.singleShot(350, self._start_onboarding)
+            return
+
         self.onboarding_active = True
-        name_prompt = self.brain.onboarding_name_prompt()
-        self._speak(name_prompt, duration_ms=5000, style="onboarding")
-        self.presentation_controller.set_thinking()
-        self._apply_presentation()
-        user_name, accepted = QInputDialog.getText(self, "Dipsy Dolphin", name_prompt)
+        submitted = self._submit_controller_task(
+            "onboarding name prompt",
+            lambda session=copy.deepcopy(self.session): self.controller.onboarding_name_prompt(
+                session
+            ),
+            self._handle_onboarding_name_prompt,
+        )
+        if not submitted:
+            self.onboarding_active = False
+
+    def _handle_onboarding_name_prompt(self, result: ControllerResult) -> None:
+        self._perform_controller_result(result)
+        user_name, accepted = QInputDialog.getText(self, "Dipsy Dolphin", result.turn.say)
         if accepted and user_name:
             self.session.user_name = user_name.strip() or "friend"
 
-        interest_prompt = self.brain.onboarding_interest_prompt(self.session.user_name)
-        self._speak(interest_prompt, duration_ms=6500, style="onboarding")
-        self.presentation_controller.set_thinking()
-        self._apply_presentation()
-        interests_text, accepted = QInputDialog.getText(self, "Dipsy Dolphin", interest_prompt)
+        self._submit_controller_task(
+            "onboarding interests prompt",
+            lambda session=copy.deepcopy(self.session): self.controller.onboarding_interest_prompt(
+                session
+            ),
+            self._handle_onboarding_interest_prompt,
+        )
+
+    def _handle_onboarding_interest_prompt(self, result: ControllerResult) -> None:
+        self._perform_controller_result(result)
+        interests_text, accepted = QInputDialog.getText(self, "Dipsy Dolphin", result.turn.say)
         if accepted and interests_text:
-            parsed = self.brain.parse_interests(interests_text)
+            parsed = self.controller.parse_interests(interests_text)
             if parsed:
                 self.session.interests = parsed
 
-        self.session.profile.has_met_user = True
-        self.session.onboarding_complete = True
+        self.session.mark_profile_configured()
         self._persist_profile()
         self.onboarding_active = False
-        self._speak(self.brain.finish_onboarding(self.session), duration_ms=9000, style="normal")
+        self._submit_controller_task(
+            "onboarding finish",
+            lambda session=copy.deepcopy(self.session): self.controller.finish_onboarding(session),
+            lambda finish_result: self._perform_controller_result(
+                finish_result, schedule_idle=True
+            ),
+        )
 
     def _chat_prompt(self) -> None:
         if self.onboarding_active:
             return
+        if self._pending_request is not None:
+            self._show_busy_note()
+            return
 
-        self.presentation_controller.set_thinking()
-        self._apply_presentation()
         user_text, accepted = QInputDialog.getText(self, "Talk to Dipsy Dolphin", "Say something:")
         if not accepted or not user_text:
             self._sync_presentation_to_motion()
             return
 
         profile_before = (self.session.user_name, tuple(self.session.interests))
-        reply = self.brain.handle_user_message(user_text, self.session)
+        submitted = self._submit_controller_task(
+            "chat reply",
+            lambda session=copy.deepcopy(self.session): self.controller.handle_user_message(
+                user_text, session
+            ),
+            lambda result: self._handle_chat_result(result, profile_before),
+        )
+        if not submitted:
+            self._show_busy_note()
+
+    def _handle_chat_result(
+        self, result: ControllerResult, profile_before: tuple[str, tuple[str, ...]]
+    ) -> None:
         profile_after = (self.session.user_name, tuple(self.session.interests))
 
         if profile_after != profile_before:
-            self.session.profile.has_met_user = True
-            self.session.onboarding_complete = self.session.profile.is_configured()
+            self.session.mark_profile_configured()
             self._persist_profile()
 
-        self._speak(
-            reply, duration_ms=7000, style=self._speech_style_for_topic(self.session.last_topic)
-        )
-        self._schedule_idle_chatter(cooldown_ms=15000)
+        self._perform_controller_result(result, schedule_idle=True)
 
     def _tell_joke(self) -> None:
-        self._speak(self.brain.tell_joke(self.session), duration_ms=6500, style="joke")
+        submitted = self._submit_controller_task(
+            "joke",
+            lambda session=copy.deepcopy(self.session): self.controller.joke_turn(session),
+            lambda result: self._perform_controller_result(result, schedule_idle=True),
+        )
+        if not submitted:
+            self._show_busy_note()
 
     def _random_bit(self) -> None:
-        line = self.brain.random_autonomous_line(self.session)
-        self._speak(
-            line, duration_ms=7000, style=self._speech_style_for_topic(self.session.last_topic)
+        submitted = self._submit_controller_task(
+            "do something",
+            lambda session=copy.deepcopy(self.session): self.controller.do_something_turn(session),
+            lambda result: self._perform_controller_result(result, schedule_idle=True),
         )
+        if not submitted:
+            self._show_busy_note()
 
     def _show_status(self) -> None:
-        self._speak(self.brain.status_line(self.session), duration_ms=7000, style="status")
+        submitted = self._submit_controller_task(
+            "status",
+            lambda session=copy.deepcopy(self.session): self.controller.status_turn(session),
+            lambda result: self._perform_controller_result(result, schedule_idle=True),
+        )
+        if not submitted:
+            self._show_busy_note()
 
     def _reset_session(self) -> None:
-        self.brain.reset_state(self.session)
-        self.profile_store.delete_profile()
-        self._speak(
-            "Session reset. Let us do the dramatic intro again.", duration_ms=5000, style="alert"
+        if self._pending_request is not None:
+            return
+
+        submitted = self._submit_controller_task(
+            "reset",
+            lambda session=copy.deepcopy(self.session): self.controller.reset_turn(session),
+            self._handle_reset_result,
         )
+        if not submitted:
+            self._show_busy_note()
+
+    def _handle_reset_result(self, result: ControllerResult) -> None:
+        self.profile_store.delete_profile()
+        self._perform_controller_result(result)
         QTimer.singleShot(700, self._start_onboarding)
 
-    def _toggle_wandering(self) -> None:
-        self.wandering_enabled = not self.wandering_enabled
-        self.toggle_wandering_action.setText(
-            "Pause Walking" if self.wandering_enabled else "Resume Walking"
-        )
+    def _start_walk_action(self) -> bool:
+        if self.dragging or self.onboarding_active:
+            return False
 
-        if self.wandering_enabled:
-            self._choose_new_target()
-            self._speak("Swim mode back on. I am roaming again.", duration_ms=4000, style="normal")
-        else:
-            self._sync_presentation_to_motion()
-            self._speak("Floating in place. Drag me anywhere.", duration_ms=3500, style="normal")
+        self.walk_active = True
+        self._choose_new_target()
+        self._sync_presentation_to_motion()
+        return True
 
     def _schedule_idle_chatter(self, cooldown_ms: Optional[int] = None) -> None:
-        interval = cooldown_ms if cooldown_ms is not None else random.randint(7000, 13000)
+        interval = (
+            cooldown_ms if cooldown_ms is not None else max(7000, self.session.autonomy_cooldown_ms)
+        )
         self.idle_chatter_timer.start(interval)
 
     def _wander_tick(self) -> None:
-        if not self.wandering_enabled or self.dragging:
+        if not self.walk_active or self.dragging:
             return
 
         current_x = self.x()
@@ -289,32 +575,37 @@ class AssistantApp(QWidget):
         distance = math.hypot(delta_x, delta_y)
 
         if distance < 8:
-            self._choose_new_target()
-            self.presentation_controller.set_idle(delta_x)
-            self._apply_presentation()
-            if self.session.onboarding_complete and random.random() < 0.1:
-                line = self.brain.random_autonomous_line(self.session)
-                self._speak(
-                    line,
-                    duration_ms=5200,
-                    style=self._speech_style_for_topic(self.session.last_topic),
-                )
+            self.walk_active = False
+            self.walk_target_x = self.x()
+            self.walk_target_y = self.y()
+            self._sync_presentation_to_motion()
             return
 
         step = min(7, distance)
         move_x = int(current_x + (delta_x / distance) * step)
         move_y = int(current_y + (delta_y / distance) * step)
         self.move(move_x, move_y)
-        self.presentation_controller.set_walking(delta_x)
+        self.animation_state_machine.set_base_state("walk", self._now_ms(), delta_x)
         self._apply_presentation()
         self._position_bubble()
 
     def _idle_chatter_tick(self) -> None:
-        if self.session.onboarding_complete and not self.dragging and random.random() < 0.28:
-            line = self.brain.random_autonomous_line(self.session)
-            self._speak(
-                line, duration_ms=5200, style=self._speech_style_for_topic(self.session.last_topic)
+        if (
+            self.session.onboarding_complete
+            and not self.dragging
+            and not self.walk_active
+            and not self.bubble_window.isVisible()
+            and self._pending_request is None
+        ):
+            self._submit_controller_task(
+                "autonomous idle tick",
+                lambda session=copy.deepcopy(self.session): self.controller.autonomous_turn(
+                    session
+                ),
+                lambda result: self._perform_controller_result(result, schedule_idle=True),
+                show_thinking=False,
             )
+            return
         self._schedule_idle_chatter()
 
     def _keep_on_top_tick(self) -> None:
@@ -334,47 +625,53 @@ class AssistantApp(QWidget):
         min_y = screen_geometry.y() + margin
         max_x = max(min_x, screen_geometry.x() + screen_geometry.width() - self.width() - margin)
         max_y = max(min_y, screen_geometry.y() + screen_geometry.height() - self.height() - 64)
-        self.walk_target_x = random.randint(min_x, max_x)
-        self.walk_target_y = random.randint(min_y, max_y)
+        current_x = self.x()
+        current_y = self.y()
 
-    def _speech_style_for_topic(self, topic: str) -> str:
-        if topic == "joke":
-            return "joke"
-        if topic == "question":
-            return "question"
-        if topic == "doodle":
-            return "spark"
-        return "normal"
+        for _ in range(6):
+            target_x = random.randint(min_x, max_x)
+            target_y = random.randint(min_y, max_y)
+            if math.hypot(target_x - current_x, target_y - current_y) >= 120:
+                self.walk_target_x = target_x
+                self.walk_target_y = target_y
+                return
+
+        self.walk_target_x = current_x
+        self.walk_target_y = current_y
 
     def _sync_presentation_to_motion(self) -> None:
         current_x = self.x()
-        current_y = self.y()
         delta_x = self.walk_target_x - current_x
-        delta_y = self.walk_target_y - current_y
-        distance = math.hypot(delta_x, delta_y)
 
-        if not self.wandering_enabled or self.dragging or distance < 8:
-            self.presentation_controller.set_idle(delta_x)
+        if not self.walk_active or self.dragging:
+            self.animation_state_machine.set_base_state("idle", self._now_ms(), delta_x)
         else:
-            self.presentation_controller.set_walking(delta_x)
+            self.animation_state_machine.set_base_state("walk", self._now_ms(), delta_x)
         self._apply_presentation()
 
     def _on_bubble_timeout(self) -> None:
         self.bubble_window.hide()
-        self.presentation_controller.stop_speech()
+        self.current_speech_style = None
+        self._clear_animation_overlay()
         self._sync_presentation_to_motion()
 
     def _speak(self, text: str, duration_ms: int = 5200, style: str = "normal") -> None:
-        self.presentation_controller.start_speech(style)
-        self._apply_presentation()
+        self.current_speech_style = style
+        self._request_animation(
+            self._speech_animation_state(style), duration_ms=duration_ms, force=True
+        )
         self.bubble_window.show_text(text)
-        self._position_bubble()
         self.bubble_window.show()
         self.bubble_window.raise_()
+        QApplication.processEvents()
+        self._position_bubble()
         self.bubble_hide_timer.start(duration_ms)
 
     def _position_bubble(self) -> None:
+        self.bubble_window.ensurePolished()
+        self.bubble_window.updateGeometry()
         self.bubble_window.adjustSize()
+        self.bubble_window.resize(self.bubble_window.sizeHint())
         bubble_width = self.bubble_window.width()
         bubble_height = self.bubble_window.height()
 
@@ -406,15 +703,27 @@ class AssistantApp(QWidget):
         self.bubble_window.move(bubble_x, bubble_y)
 
     def _quit(self) -> None:
+        self._closing = True
+        self._shutdown_runtime()
+        self.close()
+
+    def _shutdown_runtime(self) -> None:
+        if self._runtime_shutdown:
+            return
+
+        self._runtime_shutdown = True
         if self.session.onboarding_complete:
             self._persist_profile()
 
         self.bubble_hide_timer.stop()
+        self._llm_progress_timer.stop()
         self.wander_timer.stop()
         self.idle_chatter_timer.stop()
         self.keep_on_top_timer.stop()
+        self._pending_request = None
+        self.controller.shutdown()
+        self._controller_executor.shutdown(wait=False, cancel_futures=True)
         self.bubble_window.close()
-        self.close()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -436,7 +745,7 @@ class AssistantApp(QWidget):
             next_position = event.globalPosition().toPoint() - self.drag_offset
             delta_x = next_position.x() - current_x
             self.move(next_position)
-            self.presentation_controller.set_idle(delta_x)
+            self.animation_state_machine.set_base_state("idle", self._now_ms(), delta_x)
             self._apply_presentation()
             self._position_bubble()
             event.accept()
@@ -447,8 +756,9 @@ class AssistantApp(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self.dragging:
             self.dragging = False
-            if self.wandering_enabled:
-                self._choose_new_target()
+            self.walk_active = False
+            self.walk_target_x = self.x()
+            self.walk_target_y = self.y()
             self._sync_presentation_to_motion()
             event.accept()
             return
@@ -472,9 +782,8 @@ class AssistantApp(QWidget):
         super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
-        if self.session.onboarding_complete:
-            self._persist_profile()
-        self.bubble_window.close()
+        self._closing = True
+        self._shutdown_runtime()
         super().closeEvent(event)
 
 
@@ -484,8 +793,62 @@ def run() -> None:
     if app is None:
         app = QApplication(sys.argv)
 
-    window = AssistantApp()
+    try:
+        window = AssistantApp()
+    except RuntimeError as exc:
+        QMessageBox.critical(None, "Dipsy Dolphin", str(exc))
+        return
+
     window.show()
 
     if owns_app:
-        app.exec()
+        interrupt_count = 0
+        previous_sigint_handler = signal.getsignal(signal.SIGINT)
+        console_handler_cleanup: Callable[[], None] | None = None
+
+        def _handle_sigint(_signum, _frame) -> None:
+            nonlocal interrupt_count
+            interrupt_count += 1
+
+        signal.signal(signal.SIGINT, _handle_sigint)
+
+        if sys.platform == "win32":
+            handler_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+            ctrl_c_events = {0, 1}
+
+            @handler_type
+            def _console_ctrl_handler(ctrl_type: int) -> bool:
+                nonlocal interrupt_count
+                if ctrl_type in ctrl_c_events:
+                    interrupt_count += 1
+                    return True
+                return False
+
+            def _remove_console_ctrl_handler() -> None:
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_ctrl_handler, False)
+
+            if ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_ctrl_handler, True):
+                console_handler_cleanup = _remove_console_ctrl_handler
+
+        sigint_timer = QTimer()
+        sigint_timer.setInterval(100)
+
+        def _poll_for_interrupt() -> None:
+            if interrupt_count <= 0:
+                return
+            if interrupt_count >= 2:
+                os._exit(130)
+            if not window._closing:
+                window._quit()
+                app.quit()
+
+        sigint_timer.timeout.connect(_poll_for_interrupt)
+        sigint_timer.start()
+
+        try:
+            app.exec()
+        finally:
+            sigint_timer.stop()
+            if console_handler_cleanup is not None:
+                console_handler_cleanup()
+            signal.signal(signal.SIGINT, previous_sigint_handler)

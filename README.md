@@ -1,80 +1,80 @@
 # Dipsy Dolphin
 
-Dipsy Dolphin is a small Windows desktop pet inspired by old-school assistant apps like BonziBuddy.
-The goal is a playful AI-powered virtual assistant with chunky retro graphics, a speech bubble, a robotic voice style, and room to grow into richer desktop-helper behaviors over time.
-
-The current build stays local and visible. It does not perform real malicious actions or silently take over system privileges.
+Dipsy Dolphin is a small Windows desktop companion inspired by theatrical retro assistants like BonziBuddy.
+It is intentionally visible, character-driven, and local-first: a floating UI talks to a bundled local LLM, turns the model output into structured turns, and keeps the runtime legible as the project grows toward function-based computer actions.
 
 ## What the app does
 
 - Shows a floating PySide6 desktop character.
 - Supports drag-to-move, right-click actions, and quick chat.
-- Uses a speech bubble for assistant replies and character flavor.
-- Starts by learning your name and interests, then remembers them on later launches.
-- Idles on its own with jokes, doodles, questions, and interest-based chatter.
-- Saves your profile locally on Windows so Dipsy can remember you between launches.
+- Uses a bundled local GGUF model through llama.cpp for startup, onboarding, chat, jokes, status, and autonomous turns.
+- Parses model output into structured `say` / `animation` / `action` data before the UI uses it.
+- Plays visible presentation states like idle, walk, think, talk, laugh, surprised, sad, and excited.
+- Saves the user profile locally on Windows so Dipsy remembers name and interests between launches.
 
-## Safety boundaries
+## Current runtime assumptions
 
-- No privilege escalation.
-- No registry edits.
-- No startup persistence changes.
-- No process, file, or network manipulation.
-- No hidden execution or destructive behavior.
+- The app is currently built around a bundled local model and a single desktop UI host.
+- Model output is translated into structured runtime data before presentation or execution.
+- The current action surface is small, but the architecture is intended to expand toward attached functions and richer tool use.
+- Core behavior, presentation, and execution plumbing should stay separated as the interface grows.
 
-## Why this project exists
+## Current runtime shape
 
-The project is being reshaped into a character-driven desktop companion named Dipsy Dolphin.
-Near-term work should focus on personality, retro presentation, AI-backed conversation, and explicit on-screen interactions rather than hidden system behavior.
-
-## Current structure
-
-- `dipsy_dolphin/` - installable application package.
-- `dipsy_dolphin/ui/app.py` - PySide6 window, animation, menus, and speech bubble behavior.
-- `dipsy_dolphin/core/brain.py` - scripted conversation, onboarding prompts, and autonomous chatter.
-- `dipsy_dolphin/core/models.py` and `dipsy_dolphin/storage/profile_store.py` - profile/session data and local persistence.
-- `dipsy_dolphin/audio/`, `dipsy_dolphin/llm/`, and `dipsy_dolphin/actions/` - reserved runtime packages for future expansion.
-- `scripts/` - repo-local Python tooling for packaging and release metadata.
-- `packaging/windows/` - Windows packaging shims, PyInstaller launcher, and the Inno Setup definition.
-- `.github/workflows/` - version-driven Windows release automation.
-- `docs/` - product, architecture, rendering, and Windows packaging documentation.
-- `TODO.md` - temporary prioritized roadmap for future work.
-- `main.py` - compatibility shim that still launches the app directly.
-- `pyproject.toml` - project metadata, entrypoints, dependencies, tooling, and release version.
-- `uv.lock` - locked dependency graph for repeatable installs and builds.
-- `.python-version` - pinned local and CI Python version for `uv`.
-- `AGENTS.md` - repo guardrails for AI contributors.
+- `dipsy_dolphin/__main__.py` - console entrypoint for `uv run dipsy-dolphin`.
+- `dipsy_dolphin/ui/app.py` - main PySide6 shell, timers, dialogs, movement, and controller task lifecycle.
+- `dipsy_dolphin/core/controller.py` - main dialogue and autonomy coordinator; builds prompts, calls the provider, applies runtime rules, and returns structured turns.
+- `dipsy_dolphin/core/controller_models.py` - `AssistantTurn`, `ActionRequest`, and `ControllerResult`.
+- `dipsy_dolphin/core/brain.py` - profile parsing and session reset helpers for the LLM-driven flow.
+- `dipsy_dolphin/core/models.py` - user/session state dataclasses shared across UI and controller.
+- `dipsy_dolphin/llm/prompt_builder.py` - system prompt and per-event user payload construction.
+- `dipsy_dolphin/llm/response_parser.py` - JSON extraction, validation, and sanitization of model output.
+- `dipsy_dolphin/llm/local_provider.py` - bundled llama.cpp runtime management and local generation requests.
+- `dipsy_dolphin/llm/config.py`, `dipsy_dolphin/llm/model_catalog.py`, `dipsy_dolphin/llm/runtime_catalog.py` - model/runtime discovery and bundle metadata.
+- `dipsy_dolphin/actions/registry.py` - initial action/tool registry used to sanitize structured action requests.
+- `dipsy_dolphin/ui/presentation_controller.py`, `dipsy_dolphin/ui/animation_state_machine.py`, `dipsy_dolphin/ui/character_widget.py`, and `dipsy_dolphin/ui/character_renderer.py` - presentation mapping, animation state handling, and character drawing.
+- `dipsy_dolphin/storage/profile_store.py` - local profile persistence.
+- `scripts/windows_build.py` - packaging, model-bundle download, and installer orchestration.
+- `packaging/windows/` - Windows packaging shims and Inno Setup assets.
+- `docs/` - product, architecture, rendering, and Windows packaging notes.
+- `TODO.md` - prioritized roadmap from the current runtime state.
 
 ## Run locally
 
-Requires `uv` on Windows. The app itself supports Python `3.10` through `3.14`, and local development is pinned to Python `3.12` through `.python-version`.
+Requires `uv` on Windows. The app supports Python `3.10` through `3.14`, and local development is pinned to Python `3.12` through `.python-version`.
 
-Install uv if needed:
+Install `uv` if needed:
 
 ```powershell
 winget install --id=astral-sh.uv -e
 ```
 
-Then let uv provision Python and sync the project environment:
+Sync the local environment:
 
 ```powershell
 uv python install
-uv sync
+uv sync --group local-llm
 ```
 
-Then run the app:
+Download the bundled model and llama.cpp runtime:
+
+```powershell
+uv run python -m scripts.windows_build model-bundle
+```
+
+Run the app:
 
 ```powershell
 uv run dipsy-dolphin
 ```
 
+Local development now requires both the bundled model and the bundled llama.cpp runtime. If you manage the model file manually, place it under `.artifacts/local-models/default/` using the filename declared in `dipsy_dolphin/llm/model_catalog.py`.
+
 Profile data is stored in `%LOCALAPPDATA%\DipsyDolphin\data\profile.json`.
 
-`uv` manages the local `.venv` for you. The Windows packaging scripts use a separate locked environment under `.artifacts/` and do not replace your local dev environment.
+`uv sync --group local-llm` installs the local dev tooling too, so `uv run pytest` and `uv run ruff check .` are available right away. The actual inference runtime is downloaded by `model-bundle`, not by `uv sync`.
 
-`uv sync` also installs the default dev tools from `pyproject.toml`, so commands like `uv run pytest` and `uv run ruff check .` are available right away.
-
-For dependency management, think of `pyproject.toml` like `package.json` and `uv.lock` like a lockfile:
+Common dependency commands:
 
 ```powershell
 uv add <package>
@@ -82,7 +82,7 @@ uv remove <package>
 uv lock --upgrade-package <package>
 ```
 
-If another tool still needs a pip-style export, generate one from the lockfile instead of maintaining `requirements.txt` by hand:
+If another tool still needs a pip-style export, generate it from the lockfile instead of maintaining `requirements.txt` by hand:
 
 ```powershell
 uv export --format requirements.txt -o requirements.txt
@@ -96,13 +96,19 @@ Build the standalone Windows app bundle:
 uv run python -m scripts.windows_build app --clean
 ```
 
-Build the Windows installer wizard with Inno Setup:
+Build the bundled model payload and llama.cpp runtime:
+
+```powershell
+uv run python -m scripts.windows_build model-bundle
+```
+
+Build the installer:
 
 ```powershell
 uv run python -m scripts.windows_build installer --clean
 ```
 
-If you prefer Windows-native wrappers, `packaging/windows/build-app.ps1` and `packaging/windows/build-installer.ps1` still exist as thin shims around the Python tooling.
+If you prefer Windows-native wrappers, `packaging/windows/build-app.ps1` and `packaging/windows/build-installer.ps1` remain thin shims around the Python tooling.
 
 If Inno Setup is not installed yet, one option is:
 
@@ -110,30 +116,22 @@ If Inno Setup is not installed yet, one option is:
 winget install JRSoftware.InnoSetup
 ```
 
-The generated outputs stay under `.artifacts/`, so the repo root stays clean.
+The generated outputs stay under `.artifacts/` so the repo root stays clean.
 
 ## GitHub releases
 
-Releases now come directly from the version in `pyproject.toml` when changes land on `main`.
+Releases come directly from `project.version` in `pyproject.toml` when changes land on `main`.
 
 - If a push to `main` does not change `project.version`, no release is created.
-- If the version changes to a PEP 440 prerelease like `0.1.0b1` or `0.1.0rc1`, GitHub publishes a prerelease tagged `v0.1.0b1` or `v0.1.0rc1`.
-- If the version changes to a stable version like `0.1.0`, GitHub publishes a normal release tagged `v0.1.0`.
-- Installer assets are named from that same version, for example `DipsyDolphin-Setup-0.1.0b1.exe` or `DipsyDolphin-Setup-0.1.0.exe`.
+- PEP 440 prerelease versions like `0.1.0b1` publish GitHub prereleases.
+- Stable versions like `0.1.0` publish normal GitHub releases.
+- Installer assets are named from the same version, for example `DipsyDolphin-Setup-0.1.0b1.exe`.
 
 Typical flow:
 
 ```powershell
 uv version 0.1.0b1
 git commit -am "Bump version to 0.1.0b1"
-git push origin main
-```
-
-Or for a stable release:
-
-```powershell
-uv version 0.1.0
-git commit -am "Release 0.1.0"
 git push origin main
 ```
 
@@ -144,24 +142,37 @@ git push origin main
 - Double click to open chat.
 - Press `Esc` to quit.
 
+## Current testing focus
+
+- `tests/test_controller.py` - controller orchestration and guardrails.
+- `tests/test_response_parser.py` - structured output sanitization.
+- `tests/test_llm_config.py` - local model discovery rules.
+- `tests/test_animation_state_machine.py` and `tests/test_presentation_controller.py` - presentation behavior contracts.
+- `tests/test_profile_store.py` and `tests/test_brain.py` - persistence and profile parsing helpers.
+
 ## Suggested next additions
 
-- Separate UI constants into a config module if the app grows.
-- Add optional LLM-backed replies behind a clearly defined adapter.
-- Add an icon and version metadata to the Windows bundle once behavior stabilizes.
-- Add automated tests when conversation and persistence logic become more complex.
+- Add an explicit emotion model that feeds animation and dialogue choices.
+- Replace simple idle timing with a behavior scheduler.
+- Expand memory beyond name and interests.
+- Add richer bubble/dialogue presentation and optional TTS.
+- Grow the action and function interface beyond the current bootstrap registry.
 
 ## AI-friendly workflow
 
-If you are using AI heavily in this repo, start with these files first:
+If you are using AI heavily in this repo, read in this order:
 
 1. `README.md`
 2. `AGENTS.md`
 3. `TODO.md`
-4. `docs/product-brief.md`
-5. `docs/rendering-decision.md`
-6. `docs/architecture.md`
-7. `dipsy_dolphin/core/brain.py`
-8. `dipsy_dolphin/ui/app.py`
+4. `docs/architecture.md`
+5. `docs/product-brief.md`
+6. `docs/rendering-decision.md`
+7. `dipsy_dolphin/core/controller.py`
+8. `dipsy_dolphin/llm/prompt_builder.py`
+9. `dipsy_dolphin/llm/response_parser.py`
+10. `dipsy_dolphin/llm/local_provider.py`
+11. `dipsy_dolphin/ui/app.py`
+12. `dipsy_dolphin/core/brain.py`
 
-That order gives the project purpose, guardrails, architecture, rules, and implementation details before making changes.
+That order gets you the product rules, runtime architecture, LLM contract, and UI host before the smaller helper modules.

@@ -3,6 +3,12 @@ from typing import List
 
 
 @dataclass
+class ConversationTurn:
+    role: str
+    content: str
+
+
+@dataclass
 class UserProfile:
     user_name: str = "friend"
     interests: List[str] = field(default_factory=list)
@@ -16,9 +22,12 @@ class UserProfile:
 class SessionState:
     profile: UserProfile = field(default_factory=UserProfile)
     conversation_history: List[str] = field(default_factory=list)
+    turns: List[ConversationTurn] = field(default_factory=list)
     onboarding_complete: bool = False
     autonomous_chats: int = 0
     last_topic: str = ""
+    last_assistant_line: str = ""
+    autonomy_cooldown_ms: int = 0
 
     def __post_init__(self) -> None:
         self.onboarding_complete = self.onboarding_complete or self.profile.is_configured()
@@ -43,3 +52,17 @@ class SessionState:
     def apply_profile(self, profile: UserProfile) -> None:
         self.profile = profile
         self.onboarding_complete = profile.is_configured()
+
+    def mark_profile_configured(self) -> None:
+        if not self.profile.is_configured():
+            return
+        self.profile.has_met_user = True
+        self.onboarding_complete = True
+
+    def remember_user_turn(self, text: str) -> None:
+        self.conversation_history.append(text)
+        self.turns.append(ConversationTurn(role="user", content=text))
+
+    def remember_assistant_turn(self, text: str) -> None:
+        self.last_assistant_line = text
+        self.turns.append(ConversationTurn(role="assistant", content=text))

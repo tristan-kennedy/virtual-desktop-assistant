@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dipsy-dolphin"
-version = "0.1.0b1"
+version = "0.1.0b2"
 description = "Playful Windows desktop assistant prototype."
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
@@ -19,6 +19,9 @@ dipsy-dolphin = "dipsy_dolphin.__main__:main"
 dev = [
     "pytest>=8.3,<9",
     "ruff>=0.11,<0.12",
+]
+local-llm = [
+    "huggingface-hub>=0.31,<1",
 ]
 packaging = [
     "pyinstaller>=6.0,<7",

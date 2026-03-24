@@ -2,66 +2,73 @@
 
 ## Project intent
 
-Dipsy Dolphin is a playful desktop assistant project inspired by retro companions like BonziBuddy. The current app should stay visibly theatrical, character-driven, and safe.
+Dipsy Dolphin is a playful desktop companion inspired by retro assistants like BonziBuddy. The app should stay visibly theatrical, character-driven, and architecturally clear.
 
-Agents working in this repo should preserve that framing.
+The runtime is now LLM-first: the UI prompts a bundled local model, parses the result into structured assistant turns, and only then applies presentation or execution through explicit runtime interfaces.
 
 ## Hard rules
 
-- Do not add real malicious behavior.
-- Do not add code that touches real OS permissions, persistence, registry, credentials, files, processes, or network state unless the user explicitly reframes the project and the change is clearly safe.
 - Keep Dipsy's visible behaviors playful and transparent.
 - Prefer visible UX over hidden behavior.
-- Treat `YOU LOSE` as a theatrical assistant overload state, not a real compromise.
+- Keep model-facing intent, execution logic, and UI presentation separate.
+- Route computer actions through explicit tool or function interfaces rather than ad-hoc string handling.
 
 ## Code map
 
-- `main.py`: compatibility entry point that still launches the app.
-- `TODO.md`: temporary prioritized roadmap for future implementation work.
+- `README.md`: current setup, local run flow, packaging, and AI-first reading order.
+- `TODO.md`: prioritized roadmap from the current runtime state.
 - `docs/product-brief.md`: product intent, guardrails, and version scope.
-- `docs/rendering-decision.md`: long-term rendering stack and animation direction.
-- `dipsy_dolphin/ui/app.py`: all PySide6 UI behavior.
-- `dipsy_dolphin/core/brain.py`: conversation logic, onboarding flow, autonomous chatter, and session state.
-- `dipsy_dolphin/core/models.py`: shared dataclasses for profile and runtime state.
+- `docs/rendering-decision.md`: rendering stack and animation direction.
+- `docs/architecture.md`: runtime flow and separation of concerns.
+- `dipsy_dolphin/__main__.py`: console entrypoint.
+- `dipsy_dolphin/ui/app.py`: PySide6 shell, timers, dialogs, movement, and controller task lifecycle.
+- `dipsy_dolphin/core/controller.py`: main dialogue and autonomy coordinator.
+- `dipsy_dolphin/core/controller_models.py`: structured turn data contracts.
+- `dipsy_dolphin/core/brain.py`: profile parsing and reset helpers, not the main conversation engine.
+- `dipsy_dolphin/core/models.py`: shared user/session state.
+- `dipsy_dolphin/llm/`: prompt assembly, response parsing, local provider, and model/runtime discovery.
+- `dipsy_dolphin/actions/registry.py`: initial action/tool registry.
 - `dipsy_dolphin/storage/profile_store.py`: local profile persistence.
-- `scripts/windows_build.py`: Windows packaging orchestration.
-- `packaging/windows/`: Windows packaging shims and Inno Setup assets.
-- `docs/architecture.md`: architectural intent and extension notes.
+- `scripts/windows_build.py`: Windows packaging and model-bundle orchestration.
+- `packaging/windows/`: packaging shims and Inno Setup assets.
 
 ## Working style
 
 - Keep modules small and explicit.
-- Favor simple Python and standard library usage.
-- When adding features, separate UI code from assistant logic.
-- Keep packaging and CI files out of `dipsy_dolphin`.
+- Preserve the separation between UI host, controller logic, LLM contract, and action or function interfaces.
+- Favor simple Python and standard library usage where practical.
+- Keep packaging and CI files out of `dipsy_dolphin/`.
 - Use `TODO.md` as the default roadmap unless the user asks for a different priority.
-- Prefer deterministic logic for risk and state transitions.
+- Prefer deterministic validation around model output and action routing.
+- Do not reintroduce large scripted fallback conversation paths unless the user explicitly asks for them.
 - Add tests for new non-trivial logic when practical.
 
 ## Safe extension ideas
 
-- More scripted autonomous behaviors.
-- Better status screens or history views.
-- Different scripted assistant personalities.
-- Session replay or scoring summaries.
-- Better chat orchestration and LLM provider adapters.
+- Better idle behavior scheduling.
+- Emotion and mood state that drives presentation.
+- Better dialogue presentation or optional voice playback.
+- Richer function and tool execution surfaces behind clear controller contracts.
+- Better settings and debug views.
 
 ## Changes to avoid by default
 
-- Real telemetry.
-- Background services.
-- Autorun behavior.
-- Real file inspection.
-- Real process control.
-- Real network monitoring.
+- Hidden background services.
+- Opaque side effects mixed directly into UI code.
+- Large unstructured prompt or controller logic blobs.
+- Tight coupling between model output and execution behavior.
 
 ## Good first reads for an AI agent
 
 1. `README.md`
 2. `TODO.md`
-3. `docs/product-brief.md`
-4. `docs/rendering-decision.md`
-5. `docs/architecture.md`
-6. `dipsy_dolphin/core/models.py`
-7. `dipsy_dolphin/core/brain.py`
-8. `dipsy_dolphin/ui/app.py`
+3. `docs/architecture.md`
+4. `docs/product-brief.md`
+5. `docs/rendering-decision.md`
+6. `dipsy_dolphin/core/controller.py`
+7. `dipsy_dolphin/llm/prompt_builder.py`
+8. `dipsy_dolphin/llm/response_parser.py`
+9. `dipsy_dolphin/llm/local_provider.py`
+10. `dipsy_dolphin/ui/app.py`
+11. `dipsy_dolphin/core/models.py`
+12. `dipsy_dolphin/core/brain.py`
