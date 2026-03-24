@@ -96,7 +96,7 @@ Build the standalone Windows app bundle:
 uv run python -m scripts.windows_build app --clean
 ```
 
-Build the bundled model payload and llama.cpp runtime:
+Download the bundled model payload and llama.cpp runtime for local development:
 
 ```powershell
 uv run python -m scripts.windows_build model-bundle
@@ -108,7 +108,7 @@ Build the installer:
 uv run python -m scripts.windows_build installer --clean
 ```
 
-The installer command now prepares the bundled model payload and llama.cpp runtime automatically if they are missing, which keeps local packaging and GitHub Actions aligned.
+The Windows installer is now an online installer: it packages the app itself, then downloads the local model and llama.cpp runtime during setup. This keeps the GitHub release asset to a single installer file.
 
 If you prefer Windows-native wrappers, `packaging/windows/build-app.ps1` and `packaging/windows/build-installer.ps1` remain thin shims around the Python tooling.
 

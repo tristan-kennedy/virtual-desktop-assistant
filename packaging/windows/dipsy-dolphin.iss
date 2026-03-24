@@ -18,12 +18,56 @@
   #define ModelDisplayName "Bundled local model"
 #endif
 
-#ifndef ModelSourceDir
-  #error ModelSourceDir must be defined.
+#ifndef ModelDownloadUrl
+  #error ModelDownloadUrl must be defined.
 #endif
 
-#ifndef RuntimeSourceDir
-  #error RuntimeSourceDir must be defined.
+#ifndef ModelFilename
+  #error ModelFilename must be defined.
+#endif
+
+#ifndef ModelInstallSubdir
+  #define ModelInstallSubdir "default"
+#endif
+
+#ifndef ModelSizeBytes
+  #error ModelSizeBytes must be defined.
+#endif
+
+#ifndef ModelSha256
+  #error ModelSha256 must be defined.
+#endif
+
+#ifndef RuntimeDownloadUrl
+  #error RuntimeDownloadUrl must be defined.
+#endif
+
+#ifndef RuntimeArchiveName
+  #error RuntimeArchiveName must be defined.
+#endif
+
+#ifndef RuntimeExtractedSize
+  #error RuntimeExtractedSize must be defined.
+#endif
+
+#ifndef RuntimeArchiveSha256
+  #error RuntimeArchiveSha256 must be defined.
+#endif
+
+#ifndef CudaDownloadUrl
+  #error CudaDownloadUrl must be defined.
+#endif
+
+#ifndef CudaArchiveName
+  #error CudaArchiveName must be defined.
+#endif
+
+#ifndef CudaExtractedSize
+  #error CudaExtractedSize must be defined.
+#endif
+
+#ifndef CudaArchiveSha256
+  #error CudaArchiveSha256 must be defined.
 #endif
 
 #define AppName "Dipsy Dolphin"
@@ -47,10 +91,12 @@ OutputDir={#OutputDir}
 OutputBaseFilename={#OutputBaseName}
 Compression=lzma
 SolidCompression=yes
+ArchiveExtraction=full
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
+InfoBeforeFile="online-installer-info.txt"
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -60,8 +106,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#ModelSourceDir}\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#RuntimeSourceDir}\*"; DestDir: "{app}\runtime"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#ModelDownloadUrl}"; DestDir: "{app}\models\{#ModelInstallSubdir}"; DestName: "{#ModelFilename}"; ExternalSize: {#ModelSizeBytes}; Hash: "{#ModelSha256}"; Flags: external download ignoreversion
+Source: "{#RuntimeDownloadUrl}"; DestDir: "{app}\runtime"; DestName: "{#RuntimeArchiveName}"; ExternalSize: {#RuntimeExtractedSize}; Hash: "{#RuntimeArchiveSha256}"; Flags: external download extractarchive ignoreversion recursesubdirs createallsubdirs
+Source: "{#CudaDownloadUrl}"; DestDir: "{app}\runtime"; DestName: "{#CudaArchiveName}"; ExternalSize: {#CudaExtractedSize}; Hash: "{#CudaArchiveSha256}"; Flags: external download extractarchive ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"

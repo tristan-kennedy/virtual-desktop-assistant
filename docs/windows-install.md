@@ -9,8 +9,8 @@ Dipsy Dolphin uses a simple two-step Windows packaging flow.
 - `pyproject.toml` and `uv.lock` are the source of truth for dependencies and release versioning
 - Profile data is stored in `%LOCALAPPDATA%\DipsyDolphin\data\profile.json`
 - The installer registers a normal Windows uninstaller for the current user
-- Bundled local-model payloads are staged under `.artifacts\windows\model-bundles\default` before installer creation
-- The bundled llama.cpp runtime is staged under `.artifacts\windows\llama-runtime`
+- Bundled local-model payloads are staged under `.artifacts\windows\model-bundles\default` for local development
+- The bundled llama.cpp runtime is staged under `.artifacts\windows\llama-runtime` for local development
 
 ## Local build
 
@@ -36,7 +36,7 @@ Build the Windows setup wizard with:
 uv run python -m scripts.windows_build installer --clean
 ```
 
-If you want to stage the bundled local-model payload ahead of time, you can still run:
+If you want to stage the bundled local-model payload for local development ahead of time, you can still run:
 
 ```powershell
 uv run python -m scripts.windows_build model-bundle
@@ -51,12 +51,13 @@ uv run python -m scripts.windows_build installer --clean
 Notes:
 
 - The installer build first creates the app bundle unless `--skip-app-build` is supplied
-- The installer command now prepares the model bundle and llama.cpp runtime automatically if they are missing
-- `model-bundle` is still useful if you want to prefetch those assets before the installer step
+- The generated installer is an online installer that downloads the local model and llama.cpp runtime during setup
+- `model-bundle` is still useful for local development or if you want to prefetch those assets outside the installer flow
 - The app build uses `uv.lock`, so packaging stays reproducible across local and CI runs
 - You can override the Python version used for packaging with `--python-version`
 - Inno Setup 6 must be installed so `ISCC.exe` is available
 - The finished installer is written to `.artifacts\windows\installer\DipsyDolphin-Setup-<version>.exe` by default
+- The GitHub release now publishes that single online installer `.exe` for Windows
 - You can override the installer version with `--app-version` and the output file name with `--output-base-name`
 - If you prefer PowerShell wrappers, `packaging\windows\build-app.ps1` and `packaging\windows\build-installer.ps1` forward their arguments to the Python CLI
 

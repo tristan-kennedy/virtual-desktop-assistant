@@ -8,6 +8,7 @@ import subprocess
 import urllib.request
 import zipfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dipsy_dolphin.llm.model_catalog import DEFAULT_MODEL_BUNDLE
 from dipsy_dolphin.llm.runtime_catalog import DEFAULT_RUNTIME_BUNDLE
@@ -283,27 +284,12 @@ def build_installer(
 ) -> Path:
     resolved_app_version = (app_version or read_project_version()).strip()
     bundle = DEFAULT_MODEL_BUNDLE
-    bundle_root = MODEL_BUNDLES_ROOT / "default"
-    model_source_dir = bundle_root / "models"
-    runtime_source_dir = RUNTIME_BUNDLE_ROOT
 
     if not skip_app_build:
-        build_app(clean=clean, python_version=python_version, include_llm_runtime=True)
+        build_app(clean=clean, python_version=python_version, include_llm_runtime=False)
 
     if not APP_BUNDLE_PATH.exists():
         raise RuntimeError(f"App bundle not found at {APP_BUNDLE_PATH}")
-
-    ensure_model_bundle(clean=clean, python_version=python_version)
-
-    if not model_source_dir.exists():
-        raise RuntimeError(
-            f"Model bundle for '{bundle.display_name}' was expected at {model_source_dir}, but it is still missing after preparation."
-        )
-
-    if not runtime_source_dir.exists():
-        raise RuntimeError(
-            f"Bundled llama.cpp runtime was expected at {runtime_source_dir}, but it is still missing after preparation."
-        )
 
     if clean:
         shutil.rmtree(INSTALLER_OUT_DIR, ignore_errors=True)
@@ -318,11 +304,22 @@ def build_installer(
         [
             iscc_path,
             f"/DSourceDir={APP_BUNDLE_PATH}",
-            f"/DModelSourceDir={model_source_dir}",
-            f"/DRuntimeSourceDir={runtime_source_dir}",
             f"/DOutputDir={INSTALLER_OUT_DIR}",
             f"/DAppVersion={resolved_app_version}",
             f"/DModelDisplayName={bundle.display_name}",
+            f"/DModelDownloadUrl={bundle.download_url}",
+            f"/DModelFilename={bundle.filename}",
+            f"/DModelInstallSubdir={bundle.app_subdir}",
+            f"/DModelSizeBytes={bundle.size_bytes}",
+            f"/DModelSha256={bundle.sha256}",
+            f"/DRuntimeDownloadUrl={DEFAULT_RUNTIME_BUNDLE.runtime_url}",
+            f"/DRuntimeArchiveName={_url_filename(DEFAULT_RUNTIME_BUNDLE.runtime_url)}",
+            f"/DRuntimeExtractedSize={DEFAULT_RUNTIME_BUNDLE.runtime_extracted_size}",
+            f"/DRuntimeArchiveSha256={DEFAULT_RUNTIME_BUNDLE.runtime_archive_sha256}",
+            f"/DCudaDownloadUrl={DEFAULT_RUNTIME_BUNDLE.cuda_url}",
+            f"/DCudaArchiveName={_url_filename(DEFAULT_RUNTIME_BUNDLE.cuda_url)}",
+            f"/DCudaExtractedSize={DEFAULT_RUNTIME_BUNDLE.cuda_extracted_size}",
+            f"/DCudaArchiveSha256={DEFAULT_RUNTIME_BUNDLE.cuda_archive_sha256}",
             f"/DOutputBaseName={resolved_output_base_name}",
             str(INSTALLER_SCRIPT),
         ]
@@ -331,6 +328,10 @@ def build_installer(
     setup_exe = INSTALLER_OUT_DIR / f"{resolved_output_base_name}.exe"
     print(f"Built Windows installer {setup_exe} for version {resolved_app_version}.")
     return setup_exe
+
+
+def _url_filename(url: str) -> str:
+    return Path(urlparse(url).path).name
 
 
 def build_parser() -> argparse.ArgumentParser:

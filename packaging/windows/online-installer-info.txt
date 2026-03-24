@@ -1,0 +1,7 @@
+This Windows installer downloads Dipsy's local model and llama.cpp runtime during setup.
+
+Expected download size:
+- Model: about 5.3 GiB
+- Runtime archives: about 0.5 GiB
+
+Keep your internet connection active until setup finishes.
