@@ -15,6 +15,20 @@ ALLOWED_SPEECH_STYLES = {
     "onboarding",
 }
 
+ALLOWED_BEHAVIORS = {
+    "idle",
+    "emote",
+    "quip",
+    "question",
+    "joke",
+    "roam",
+    "chat",
+    "status",
+    "reset",
+    "onboarding",
+    "action",
+}
+
 
 def parse_assistant_turn(payload: dict[str, object] | str) -> AssistantTurn:
     parsed = _coerce_payload(payload)
@@ -27,6 +41,10 @@ def parse_assistant_turn(payload: dict[str, object] | str) -> AssistantTurn:
     speech_style = str(parsed.get("speech_style", "normal")).strip().lower() or "normal"
     if speech_style not in ALLOWED_SPEECH_STYLES:
         speech_style = "normal"
+
+    behavior = str(parsed.get("behavior", "")).strip().lower()
+    if behavior not in ALLOWED_BEHAVIORS:
+        behavior = ""
 
     cooldown_ms = _bounded_int(parsed.get("cooldown_ms", 12000), minimum=4000, maximum=30000)
     topic = str(parsed.get("topic", "chat")).strip().lower() or "chat"
@@ -45,6 +63,7 @@ def parse_assistant_turn(payload: dict[str, object] | str) -> AssistantTurn:
         speech_style=speech_style,
         action=action,
         cooldown_ms=cooldown_ms,
+        behavior=behavior,
         topic=topic,
         source="llm",
     )

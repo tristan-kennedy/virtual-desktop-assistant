@@ -28,3 +28,18 @@ def test_extract_json_object_handles_wrapped_json() -> None:
 
     assert extracted["say"] == "Hello"
     assert extracted["animation"] == "talk"
+
+
+def test_parse_assistant_turn_keeps_valid_behavior() -> None:
+    turn = parse_assistant_turn(
+        {
+            "say": "",
+            "animation": "think",
+            "speech_style": "normal",
+            "behavior": "emote",
+            "cooldown_ms": 8000,
+            "topic": "idle",
+        }
+    )
+
+    assert turn.behavior == "emote"

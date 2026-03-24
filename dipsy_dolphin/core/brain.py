@@ -31,7 +31,11 @@ class AssistantBrain:
         state.conversation_history.clear()
         state.turns.clear()
         state.onboarding_complete = False
+        state.last_user_interaction_ms = 0
         state.autonomous_chats = 0
+        state.autonomous_beats = 0
+        state.last_autonomous_behavior = ""
+        state.recent_autonomous_behaviors.clear()
         state.last_topic = ""
         state.last_assistant_line = ""
         state.autonomy_cooldown_ms = 0

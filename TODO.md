@@ -67,11 +67,12 @@ Use this file as the default implementation order unless the user gives a differ
 - Tie dialogue categories to both animation cues and bubble styling.
 - Done when: a user can infer Dipsy's mood from visuals even with the text hidden.
 
-8. Replace simple idle timing with a behavior scheduler
+8. Replace simple idle timing with a behavior scheduler [in progress]
 
 - Introduce a scheduler that considers time since last interaction, emotion, cooldowns, and user preferences.
 - Separate ambient chatter, questions, jokes, reactions, and movement into distinct behavior types.
 - Done when: autonomous behavior is state-driven instead of mostly timer-driven.
+- Status: basic weighted autonomous plan selection now exists in `dipsy_dolphin/core/autonomy.py` and `dipsy_dolphin/ui/app.py`, but emotion-driven scheduling and richer behavior memory are still pending.
 
 9. Upgrade the speech bubble and dialogue presentation [in progress]
 

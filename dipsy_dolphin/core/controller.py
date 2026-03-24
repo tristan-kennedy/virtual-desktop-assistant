@@ -4,6 +4,7 @@ import copy
 from dataclasses import replace
 from typing import Any, Protocol
 
+from .autonomy import AutonomyPlan
 from ..llm.config import discover_model_bundle
 from ..llm.local_provider import LocalLlamaProvider
 from ..llm.prompt_builder import build_system_prompt, build_user_prompt
@@ -114,7 +115,20 @@ class AssistantController:
         if callable(shutdown):
             shutdown()
 
-    def autonomous_turn(self, state: SessionState) -> ControllerResult:
+    def autonomous_turn(
+        self,
+        state: SessionState,
+        plan: AutonomyPlan | None = None,
+        *,
+        seconds_since_user_interaction: int | None = None,
+    ) -> ControllerResult:
+        active_plan = plan or AutonomyPlan(
+            mode="idle",
+            allowed_behaviors=("idle", "emote"),
+            guidance="Prefer a quiet beat.",
+            minimum_cooldown_ms=12000,
+            base_weight=1,
+        )
         return self._build_result(
             "autonomous",
             state,
@@ -122,9 +136,16 @@ class AssistantController:
                 animation="idle",
                 speech_style="normal",
                 cooldown_ms=12000,
+                behavior=active_plan.mode,
                 topic=state.last_topic or "idle",
                 source="llm",
             ),
+            event_context={
+                "autonomy_plan": active_plan.prompt_payload(
+                    seconds_since_user_interaction=seconds_since_user_interaction
+                )
+            },
+            minimum_cooldown_ms=active_plan.minimum_cooldown_ms,
         )
 
     def do_something_turn(self, state: SessionState) -> ControllerResult:
@@ -135,6 +156,7 @@ class AssistantController:
                 animation="excited",
                 speech_style="normal",
                 cooldown_ms=12000,
+                behavior="action",
                 topic="action",
                 source="llm",
             ),
@@ -148,6 +170,7 @@ class AssistantController:
                 animation="laugh",
                 speech_style="joke",
                 cooldown_ms=10000,
+                behavior="joke",
                 topic="joke",
                 source="llm",
             ),
@@ -161,6 +184,7 @@ class AssistantController:
                 animation="talk",
                 speech_style="status",
                 cooldown_ms=9000,
+                behavior="status",
                 topic="status",
                 source="llm",
             ),
@@ -174,6 +198,7 @@ class AssistantController:
                 animation="surprised",
                 speech_style="alert",
                 cooldown_ms=5000,
+                behavior="reset",
                 topic="reset",
                 source="llm",
             ),
@@ -186,6 +211,8 @@ class AssistantController:
         *,
         defaults: AssistantTurn,
         user_text: str = "",
+        event_context: dict[str, object] | None = None,
+        minimum_cooldown_ms: int | None = None,
     ) -> ControllerResult:
         working_state = copy.deepcopy(state)
         if event == "chat" and user_text:
@@ -194,7 +221,7 @@ class AssistantController:
         elif event == "reset":
             self.brain.reset_state(working_state)
         system_prompt = build_system_prompt()
-        user_prompt = build_user_prompt(event, working_state, user_text)
+        user_prompt = build_user_prompt(event, working_state, user_text, context=event_context)
 
         try:
             parsed_turn = self._request_turn(system_prompt=system_prompt, user_prompt=user_prompt)
@@ -204,15 +231,20 @@ class AssistantController:
         turn = self._apply_defaults(
             parsed_turn,
             defaults,
+            event=event,
             required_speech=self._speech_required(event),
             required_visible=self._visible_response_required(event),
+            minimum_cooldown_ms=minimum_cooldown_ms,
         )
         if self._speech_required(event) and not turn.say:
             raise RuntimeError(f"Local brain returned no speech for required event '{event}'")
 
         self._remember_turn(turn, working_state)
-        if event == "autonomous" and (turn.say or turn.action is not None):
-            working_state.autonomous_chats += 1
+        if event == "autonomous":
+            working_state.autonomous_beats += 1
+            working_state.remember_autonomous_behavior(self._autonomous_behavior_for_turn(turn))
+            if turn.say:
+                working_state.autonomous_chats += 1
         working_state.last_topic = turn.topic or working_state.last_topic
         working_state.autonomy_cooldown_ms = turn.cooldown_ms
         return ControllerResult(turn=turn, session_state=working_state)
@@ -226,18 +258,26 @@ class AssistantController:
         parsed_turn: AssistantTurn,
         defaults: AssistantTurn,
         *,
+        event: str,
         required_speech: bool,
         required_visible: bool,
+        minimum_cooldown_ms: int | None,
     ) -> AssistantTurn:
         turn = replace(
             parsed_turn,
             say=parsed_turn.say.strip(),
             animation=parsed_turn.animation or defaults.animation,
             speech_style=parsed_turn.speech_style or defaults.speech_style,
-            cooldown_ms=parsed_turn.cooldown_ms or defaults.cooldown_ms,
+            cooldown_ms=max(
+                parsed_turn.cooldown_ms or defaults.cooldown_ms, minimum_cooldown_ms or 0
+            ),
+            behavior=parsed_turn.behavior or defaults.behavior,
             topic=parsed_turn.topic or defaults.topic,
             source="llm",
         )
+
+        if event == "autonomous" and turn.behavior == "roam" and turn.action is None:
+            turn = replace(turn, action=ActionRequest(action_id="roam_somewhere", args={}))
 
         if required_speech and not turn.say:
             return replace(
@@ -249,12 +289,21 @@ class AssistantController:
                 turn,
                 say="Stand back. I am preparing a tasteful burst of desktop theater.",
                 animation="excited",
+                behavior=turn.behavior or defaults.behavior or "action",
                 speech_style="normal",
                 topic=turn.topic or defaults.topic or "action",
             )
 
+        if event == "autonomous" and self._is_silent_autonomous_emote(turn):
+            return turn
+
         if not required_speech and not turn.say and turn.action is None:
-            return replace(turn, animation="idle", action=ActionRequest(action_id="idle", args={}))
+            return replace(
+                turn,
+                animation="idle",
+                action=ActionRequest(action_id="idle", args={}),
+                behavior=turn.behavior or defaults.behavior or "idle",
+            )
 
         if turn.say and len(turn.say) > MAX_SPOKEN_CHARACTERS:
             shortened = turn.say[: MAX_SPOKEN_CHARACTERS - 3].rstrip(" ,.;:!") + "..."
@@ -286,6 +335,33 @@ class AssistantController:
         if turn.action is not None and turn.action.action_id != "idle":
             return False
         return turn.animation == "idle"
+
+    def _is_silent_autonomous_emote(self, turn: AssistantTurn) -> bool:
+        return (
+            turn.action is None
+            and not turn.say
+            and turn.animation
+            in {
+                "think",
+                "laugh",
+                "surprised",
+                "sad",
+                "excited",
+            }
+        )
+
+    def _autonomous_behavior_for_turn(self, turn: AssistantTurn) -> str:
+        if turn.behavior:
+            return turn.behavior
+        if turn.action is not None:
+            if turn.action.action_id == "roam_somewhere":
+                return "roam"
+            return "idle"
+        if turn.say:
+            return "quip"
+        if turn.animation == "idle":
+            return "idle"
+        return "emote"
 
     def _required_llm_message(self) -> str:
         return (

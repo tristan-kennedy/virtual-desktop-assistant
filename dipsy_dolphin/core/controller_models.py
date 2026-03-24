@@ -17,6 +17,7 @@ class AssistantTurn:
     speech_style: str = "normal"
     action: ActionRequest | None = None
     cooldown_ms: int = 12000
+    behavior: str = ""
     topic: str = ""
     source: str = "llm"
 

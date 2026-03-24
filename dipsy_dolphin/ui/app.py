@@ -13,7 +13,7 @@ if sys.platform == "win32":
     import ctypes
 
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QMouseEvent
+from PySide6.QtGui import QAction, QFont, QFontMetrics, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core.autonomy import choose_autonomy_plan, seconds_since_user_interaction
 from ..core.controller import AssistantController
 from ..core.controller_models import AssistantTurn, ControllerResult
 from ..core.models import SessionState
@@ -48,6 +49,7 @@ class BubbleWindow(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetFixedSize)
 
         frame = QFrame()
         frame.setObjectName("bubbleFrame")
@@ -73,12 +75,14 @@ class BubbleWindow(QWidget):
 
     def show_text(self, text: str) -> None:
         self.ensurePolished()
-        self.label.setFixedWidth(self._target_label_width(text))
+        label_width = self._target_label_width(text)
+        self.label.setFixedWidth(label_width)
         self.label.setText(text)
-        self.label.adjustSize()
+        self.label.setFixedHeight(self._target_label_height(text, label_width))
         self.updateGeometry()
         self.adjustSize()
-        self.resize(self.sizeHint())
+        target_size = self.sizeHint()
+        self.setFixedSize(target_size)
 
     def _target_label_width(self, text: str) -> int:
         length = len(text.strip())
@@ -89,6 +93,18 @@ class BubbleWindow(QWidget):
         if length <= 180:
             return 360
         return 420
+
+    def _target_label_height(self, text: str, width: int) -> int:
+        metrics = QFontMetrics(self.label.font())
+        rect = metrics.boundingRect(
+            0,
+            0,
+            width,
+            2000,
+            int(Qt.TextFlag.TextWordWrap),
+            text or " ",
+        )
+        return max(metrics.lineSpacing(), rect.height())
 
 
 class ControllerTaskBridge(QObject):
@@ -483,6 +499,7 @@ class AssistantApp(QWidget):
             self._sync_presentation_to_motion()
             return
 
+        self._note_user_interaction()
         profile_before = (self.session.user_name, tuple(self.session.interests))
         submitted = self._submit_controller_task(
             "chat reply",
@@ -506,6 +523,7 @@ class AssistantApp(QWidget):
         self._perform_controller_result(result, schedule_idle=True)
 
     def _tell_joke(self) -> None:
+        self._note_user_interaction()
         submitted = self._submit_controller_task(
             "joke",
             lambda session=copy.deepcopy(self.session): self.controller.joke_turn(session),
@@ -515,6 +533,7 @@ class AssistantApp(QWidget):
             self._show_busy_note()
 
     def _random_bit(self) -> None:
+        self._note_user_interaction()
         submitted = self._submit_controller_task(
             "do something",
             lambda session=copy.deepcopy(self.session): self.controller.do_something_turn(session),
@@ -524,6 +543,7 @@ class AssistantApp(QWidget):
             self._show_busy_note()
 
     def _show_status(self) -> None:
+        self._note_user_interaction()
         submitted = self._submit_controller_task(
             "status",
             lambda session=copy.deepcopy(self.session): self.controller.status_turn(session),
@@ -536,6 +556,7 @@ class AssistantApp(QWidget):
         if self._pending_request is not None:
             return
 
+        self._note_user_interaction()
         submitted = self._submit_controller_task(
             "reset",
             lambda session=copy.deepcopy(self.session): self.controller.reset_turn(session),
@@ -563,6 +584,9 @@ class AssistantApp(QWidget):
             cooldown_ms if cooldown_ms is not None else max(7000, self.session.autonomy_cooldown_ms)
         )
         self.idle_chatter_timer.start(interval)
+
+    def _note_user_interaction(self) -> None:
+        self.session.mark_user_interaction(self._now_ms())
 
     def _wander_tick(self) -> None:
         if not self.walk_active or self.dragging:
@@ -597,10 +621,17 @@ class AssistantApp(QWidget):
             and not self.bubble_window.isVisible()
             and self._pending_request is None
         ):
+            now_ms = self._now_ms()
+            autonomy_plan = choose_autonomy_plan(self.session, now_ms)
+            since_user = seconds_since_user_interaction(self.session, now_ms)
             self._submit_controller_task(
-                "autonomous idle tick",
-                lambda session=copy.deepcopy(self.session): self.controller.autonomous_turn(
-                    session
+                f"autonomous {autonomy_plan.mode}",
+                lambda session=copy.deepcopy(self.session), plan=autonomy_plan: (
+                    self.controller.autonomous_turn(
+                        session,
+                        plan=plan,
+                        seconds_since_user_interaction=since_user,
+                    )
                 ),
                 lambda result: self._perform_controller_result(result, schedule_idle=True),
                 show_thinking=False,

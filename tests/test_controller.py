@@ -65,6 +65,19 @@ class LongReplyProvider(StubProvider):
         }
 
 
+class SilentEmoteProvider(StubProvider):
+    def generate(self, *, system_prompt: str, user_prompt: str) -> dict[str, object]:
+        return {
+            "say": "",
+            "animation": "think",
+            "speech_style": "normal",
+            "action": None,
+            "cooldown_ms": 12000,
+            "behavior": "emote",
+            "topic": "idle",
+        }
+
+
 def test_controller_uses_llm_turn_when_provider_is_available() -> None:
     controller = AssistantController(provider=StubProvider())
     state = SessionState()
@@ -110,3 +123,16 @@ def test_controller_does_not_clip_normal_long_reply_lengths() -> None:
     result = controller.handle_user_message("Tell me something longer", state)
 
     assert len(result.turn.say) == 500
+
+
+def test_autonomous_turn_preserves_silent_emote() -> None:
+    controller = AssistantController(provider=SilentEmoteProvider())
+    state = SessionState()
+
+    result = controller.autonomous_turn(state)
+
+    assert result.turn.say == ""
+    assert result.turn.animation == "think"
+    assert result.turn.action is None
+    assert result.session_state is not None
+    assert result.session_state.last_autonomous_behavior == "emote"
