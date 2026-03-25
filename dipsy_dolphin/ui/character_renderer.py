@@ -16,7 +16,7 @@ class CharacterRenderer:
         self._draw_shadow(painter, bob, presentation)
         self._draw_body_layers(painter, bob, presentation)
         self._draw_face(painter, bob, presentation)
-        self._draw_badge(painter, bob)
+        self._draw_badge(painter, bob, presentation)
         self._draw_effects(painter, bob, presentation)
 
     def _draw_shadow(
@@ -135,9 +135,24 @@ class CharacterRenderer:
         else:
             painter.drawArc(QRectF(92, 84, 28, 18), 195 * 16, -120 * 16)
 
-    def _draw_badge(self, painter: QPainter, bob: int) -> None:
+    def _draw_badge(self, painter: QPainter, bob: int, presentation: CharacterPresentation) -> None:
+        accent_colors = {
+            "calm": QColor("#D7F1FF"),
+            "warm": QColor("#FFD56A"),
+            "friendly": QColor("#9FE7C3"),
+            "wary": QColor("#F7C7A8"),
+            "sleepy": QColor("#BFD8E6"),
+            "restless": QColor("#AEE5D8"),
+        }
         painter.save()
         painter.translate(0, bob)
+        painter.setPen(QPen(QColor("#103248"), 1))
+        painter.setBrush(
+            accent_colors.get(
+                getattr(presentation, "accent_variant", "calm"), accent_colors["calm"]
+            )
+        )
+        painter.drawRoundedRect(QRectF(68, 116, 72, 18), 8, 8)
         painter.setPen(QColor("#103248"))
         painter.setFont(QFont("Franklin Gothic Medium", 10, QFont.Bold))
         painter.drawText(QRectF(64, 116, 80, 20), Qt.AlignCenter, "DIPSY")
@@ -169,4 +184,12 @@ class CharacterRenderer:
                 painter.setPen(QPen(QColor("#8DD9F8"), 2))
                 painter.setBrush(QColor("#8DD9F8"))
                 painter.drawEllipse(QRectF(138, 56, 8, 12))
+            elif effect == "loading":
+                painter.setPen(Qt.NoPen)
+                loading_colors = (QColor("#9FE7C3"), QColor("#FFD56A"), QColor("#8DD9F8"))
+                x_positions = (142, 154, 166)
+                for index, x_pos in enumerate(x_positions):
+                    painter.setBrush(loading_colors[index])
+                    y_offset = (-4, 0, -2)[index]
+                    painter.drawEllipse(QRectF(x_pos, 28 + y_offset, 8, 8))
         painter.restore()

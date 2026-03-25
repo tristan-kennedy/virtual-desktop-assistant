@@ -1,19 +1,11 @@
 import json
 
 from ..actions.registry import sanitize_action_request
+from ..core.dialogue import normalize_dialogue_category
+from ..core.emotion import EmotionState, sanitize_emotion_payload
+from ..core.memory import sanitize_memory_updates
 from ..core.controller_models import AssistantTurn
 from .prompt_builder import ALLOWED_ANIMATIONS
-
-
-ALLOWED_SPEECH_STYLES = {
-    "normal",
-    "joke",
-    "question",
-    "spark",
-    "alert",
-    "status",
-    "onboarding",
-}
 
 ALLOWED_BEHAVIORS = {
     "idle",
@@ -30,17 +22,21 @@ ALLOWED_BEHAVIORS = {
 }
 
 
-def parse_assistant_turn(payload: dict[str, object] | str) -> AssistantTurn:
+def parse_assistant_turn(
+    payload: dict[str, object] | str,
+    *,
+    fallback_emotion: EmotionState | None = None,
+) -> AssistantTurn:
     parsed = _coerce_payload(payload)
 
     say = str(parsed.get("say", "")).strip()
-    animation = str(parsed.get("animation", "talk")).strip().lower() or "talk"
-    if animation not in ALLOWED_ANIMATIONS:
-        animation = "talk"
+    animation = str(parsed.get("animation", "")).strip().lower()
+    if animation and animation not in ALLOWED_ANIMATIONS:
+        animation = ""
 
-    speech_style = str(parsed.get("speech_style", "normal")).strip().lower() or "normal"
-    if speech_style not in ALLOWED_SPEECH_STYLES:
-        speech_style = "normal"
+    dialogue_category = normalize_dialogue_category(
+        parsed.get("dialogue_category"), fallback="normal"
+    )
 
     behavior = str(parsed.get("behavior", "")).strip().lower()
     if behavior not in ALLOWED_BEHAVIORS:
@@ -57,11 +53,16 @@ def parse_assistant_turn(payload: dict[str, object] | str) -> AssistantTurn:
             action_payload.get("args") if isinstance(action_payload.get("args"), dict) else None,
         )
 
+    memory_updates = sanitize_memory_updates(parsed.get("memory_updates"))
+    emotion = sanitize_emotion_payload(parsed.get("emotion"), fallback=fallback_emotion)
+
     return AssistantTurn(
         say=say,
         animation=animation,
-        speech_style=speech_style,
+        dialogue_category=dialogue_category,
         action=action,
+        memory_updates=memory_updates,
+        emotion=emotion,
         cooldown_ms=cooldown_ms,
         behavior=behavior,
         topic=topic,

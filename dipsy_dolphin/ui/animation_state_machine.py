@@ -21,6 +21,7 @@ class AnimationStateMachine:
         self._configs: Dict[str, AnimationStateConfig] = {
             "idle": AnimationStateConfig(priority=0, min_hold_ms=0),
             "walk": AnimationStateConfig(priority=0, min_hold_ms=0),
+            "loading": AnimationStateConfig(priority=2, min_hold_ms=600),
             "think": AnimationStateConfig(priority=2, min_hold_ms=350),
             "talk": AnimationStateConfig(priority=3, min_hold_ms=450),
             "laugh": AnimationStateConfig(priority=4, min_hold_ms=1100, cooldown_ms=2200),

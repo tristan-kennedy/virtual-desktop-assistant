@@ -14,7 +14,7 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 4. The app creates a fresh `SessionState` and an `AssistantController`.
 5. `AssistantController` builds a system prompt and event payload through `dipsy_dolphin.llm.prompt_builder`.
 6. `dipsy_dolphin.llm.local_provider.LocalLlamaProvider` locates the bundled model and llama.cpp runtime, starts the local server if needed, and requests a response.
-7. `dipsy_dolphin.llm.response_parser` extracts and sanitizes the JSON into an `AssistantTurn`.
+7. `dipsy_dolphin.llm.response_parser` extracts and sanitizes the JSON into an `AssistantTurn` with dialogue category, animation hint, emotion, and action data.
 8. `dipsy_dolphin.actions.registry` validates any requested action id against the current tool registry.
 9. `AssistantApp` applies the returned speech, animation, and any execution result to the UI and persists profile updates when needed.
 
@@ -22,9 +22,11 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 
 ### UI host
 
-- `dipsy_dolphin/ui/app.py` owns the PySide6 shell, request lifecycle, onboarding dialogs, movement, bubble timing, and timer-driven autonomous turns.
+- `dipsy_dolphin/ui/app.py` owns the PySide6 shell, request lifecycle, onboarding dialogs, movement, bubble timing, dialogue queue timers, and the single Qt timer that drives autonomy checks.
 - `dipsy_dolphin/ui/animation_state_machine.py` tracks active animation state, priorities, and cooldowns.
-- `dipsy_dolphin/ui/presentation_controller.py` maps controller output into render-friendly presentation values.
+- `dipsy_dolphin/ui/dialogue_presenter.py` owns staged reveal, queueing, and interruption rules for visible dialogue.
+- `dipsy_dolphin/ui/presentation_policy.py` maps semantic turn cues into animation and bubble-style decisions.
+- `dipsy_dolphin/ui/presentation_controller.py` maps those cues plus emotion into render-friendly presentation values.
 - `dipsy_dolphin/ui/character_widget.py`, `dipsy_dolphin/ui/character_renderer.py`, and `dipsy_dolphin/ui/asset_manifest.py` render the character and expose layout anchors.
 
 ### Decision layer
@@ -33,6 +35,7 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 - `dipsy_dolphin/core/controller_models.py` defines the structured turn contract used between the controller and UI.
 - `dipsy_dolphin/core/brain.py` is now intentionally small: it parses profile facts from user text and resets state. It is not the main conversation engine.
 - `dipsy_dolphin/core/models.py` defines shared user/session dataclasses.
+- `dipsy_dolphin/core/memory.py` defines structured memory sections and validated LLM-authored memory updates.
 
 ### LLM contract
 
@@ -51,6 +54,7 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 ### Persistence and packaging
 
 - `dipsy_dolphin/storage/profile_store.py` currently handles local profile persistence.
+- `dipsy_dolphin/storage/memory_store.py` persists long-term memory separately from the profile.
 - `scripts/windows_build.py` owns packaging, model download, runtime download, and installer orchestration.
 - `packaging/windows/` contains launchers and Inno Setup assets.
 
@@ -73,7 +77,7 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 ## Recommended growth path
 
 - Add an emotion or mood layer inside `dipsy_dolphin/core/` that feeds animation and dialogue style.
-- Add a better autonomous behavior scheduler instead of simple cooldown timing.
+- Grow the existing autonomous behavior scheduler with richer preferences and memory as needed.
 - Expand storage carefully for memory, settings, tool history, and execution state when those systems land.
 - Grow `dipsy_dolphin/actions/` from the current registry into a fuller function and tool execution layer.
 - Add `docs/decisions/` if the architecture starts gaining more major irreversible choices.

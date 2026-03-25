@@ -8,9 +8,10 @@ It is intentionally visible, character-driven, and local-first: a floating UI ta
 - Shows a floating PySide6 desktop character.
 - Supports drag-to-move, right-click actions, and quick chat.
 - Uses a bundled local GGUF model through llama.cpp for startup, onboarding, chat, jokes, status, and autonomous turns.
-- Parses model output into structured `say` / `animation` / `action` data before the UI uses it.
+- Parses model output into structured turn data including `say`, `dialogue_category`, `animation`, `emotion`, `memory_updates`, and `action` before the UI uses it.
 - Plays visible presentation states like idle, walk, think, talk, laugh, surprised, sad, and excited.
-- Saves the user profile locally on Windows so Dipsy remembers name and interests between launches.
+- Can speak lines through an optional retro Windows voice service that prefers classic old-school voices and keeps speech interruptible.
+- Saves both a local profile and structured memory on Windows so Dipsy remembers identity, preferences, and long-term facts between launches.
 
 ## Current runtime assumptions
 
@@ -26,14 +27,15 @@ It is intentionally visible, character-driven, and local-first: a floating UI ta
 - `dipsy_dolphin/core/controller.py` - main dialogue and autonomy coordinator; builds prompts, calls the provider, applies runtime rules, and returns structured turns.
 - `dipsy_dolphin/core/controller_models.py` - `AssistantTurn`, `ActionRequest`, and `ControllerResult`.
 - `dipsy_dolphin/core/brain.py` - profile parsing and session reset helpers for the LLM-driven flow.
-- `dipsy_dolphin/core/models.py` - user/session state dataclasses shared across UI and controller.
+- `dipsy_dolphin/core/models.py` and `dipsy_dolphin/core/memory.py` - user/session state and structured memory dataclasses shared across UI and controller.
 - `dipsy_dolphin/llm/prompt_builder.py` - system prompt and per-event user payload construction.
 - `dipsy_dolphin/llm/response_parser.py` - JSON extraction, validation, and sanitization of model output.
 - `dipsy_dolphin/llm/local_provider.py` - bundled llama.cpp runtime management and local generation requests.
 - `dipsy_dolphin/llm/config.py`, `dipsy_dolphin/llm/model_catalog.py`, `dipsy_dolphin/llm/runtime_catalog.py` - model/runtime discovery and bundle metadata.
 - `dipsy_dolphin/actions/registry.py` - initial action/tool registry used to sanitize structured action requests.
-- `dipsy_dolphin/ui/presentation_controller.py`, `dipsy_dolphin/ui/animation_state_machine.py`, `dipsy_dolphin/ui/character_widget.py`, and `dipsy_dolphin/ui/character_renderer.py` - presentation mapping, animation state handling, and character drawing.
-- `dipsy_dolphin/storage/profile_store.py` - local profile persistence.
+- `dipsy_dolphin/ui/presentation_policy.py`, `dipsy_dolphin/ui/presentation_controller.py`, `dipsy_dolphin/ui/animation_state_machine.py`, `dipsy_dolphin/ui/character_widget.py`, and `dipsy_dolphin/ui/character_renderer.py` - semantic presentation mapping, animation state handling, bubble styling, and character drawing.
+- `dipsy_dolphin/storage/profile_store.py` and `dipsy_dolphin/storage/memory_store.py` - local profile and memory persistence.
+- `dipsy_dolphin/voice/` - retro voice selection, Windows speech backend, and isolated speech service contracts.
 - `scripts/windows_build.py` - packaging, model-bundle download, and installer orchestration.
 - `packaging/windows/` - Windows packaging shims and Inno Setup assets.
 - `docs/` - product, architecture, rendering, and Windows packaging notes.
@@ -70,7 +72,7 @@ uv run dipsy-dolphin
 
 Local development now requires both the bundled model and the bundled llama.cpp runtime. If you manage the model file manually, place it under `.artifacts/local-models/default/` using the filename declared in `dipsy_dolphin/llm/model_catalog.py`.
 
-Profile data is stored in `%LOCALAPPDATA%\DipsyDolphin\data\profile.json`.
+Profile data, including voice settings, is stored in `%LOCALAPPDATA%\DipsyDolphin\data\profile.json` and memory data is stored in `%LOCALAPPDATA%\DipsyDolphin\data\memory.json`.
 
 `uv sync --group local-llm` installs the local dev tooling too, so `uv run pytest` and `uv run ruff check .` are available right away. The actual inference runtime is downloaded by `model-bundle`, not by `uv sync`.
 
@@ -141,6 +143,7 @@ git push origin main
 
 - Drag with left click to move the character.
 - Right click to open the action menu.
+- Use the `Voice` submenu to mute, preview, or tune retro speech output.
 - Double click to open chat.
 - Press `Esc` to quit.
 
@@ -151,6 +154,7 @@ git push origin main
 - `tests/test_llm_config.py` - local model discovery rules.
 - `tests/test_animation_state_machine.py` and `tests/test_presentation_controller.py` - presentation behavior contracts.
 - `tests/test_profile_store.py` and `tests/test_brain.py` - persistence and profile parsing helpers.
+- `tests/test_voice_retro.py`, `tests/test_voice_service.py`, and `tests/test_windows_speech_backend.py` - retro voice selection and runtime behavior.
 
 ## Suggested next additions
 

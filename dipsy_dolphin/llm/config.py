@@ -30,10 +30,6 @@ def discover_model_bundle() -> ResolvedModelBundle | None:
     return None
 
 
-def resolve_model_bundle() -> ResolvedModelBundle | None:
-    return discover_model_bundle()
-
-
 def _candidate_model_roots(bundle: ModelBundle) -> list[Path]:
     roots: list[Path] = []
 

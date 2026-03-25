@@ -61,33 +61,34 @@ Use this file as the default implementation order unless the user gives a differ
 - Keep the model simple and inspectable.
 - Done when: identical input can produce different visible behavior based on Dipsy's current emotional state.
 
-7. Link animation to emotion and intent
+7. Link animation to emotion and intent [done]
 
 - Map joke delivery to laugh animation, waiting to think animation, surprise to reaction animation, and so on.
 - Tie dialogue categories to both animation cues and bubble styling.
 - Done when: a user can infer Dipsy's mood from visuals even with the text hidden.
+- Status: completed through `dipsy_dolphin/core/dialogue.py`, `dipsy_dolphin/ui/presentation_policy.py`, `dipsy_dolphin/ui/presentation_controller.py`, and the updated `dipsy_dolphin/ui/app.py` flow.
 
-8. Replace simple idle timing with a behavior scheduler [in progress]
+8. Replace simple idle timing with a behavior scheduler [done]
 
 - Introduce a scheduler that considers time since last interaction, emotion, cooldowns, and user preferences.
 - Separate ambient chatter, questions, jokes, reactions, and movement into distinct behavior types.
 - Done when: autonomous behavior is state-driven instead of mostly timer-driven.
-- Status: basic weighted autonomous plan selection now exists in `dipsy_dolphin/core/autonomy.py` and `dipsy_dolphin/ui/app.py`, but emotion-driven scheduling and richer behavior memory are still pending.
+- Status: completed through `dipsy_dolphin/core/autonomy.py`, `dipsy_dolphin/core/models.py`, `dipsy_dolphin/storage/profile_store.py`, and the scheduler-driven timer flow in `dipsy_dolphin/ui/app.py`.
 
-9. Upgrade the speech bubble and dialogue presentation [in progress]
+9. Upgrade the speech bubble and dialogue presentation [done]
 
 - Add clearer line categories, staged reveal, queueing rules, and interruption handling.
 - Support different bubble styles for jokes, warnings, thoughts, and normal speech.
 - Keep the bubble synchronized with animation and future voice playback.
 - Done when: dialogue presentation has enough structure to support richer emotional delivery and voice.
-- Status: basic bubble timing and speech-style hooks exist in `dipsy_dolphin/ui/app.py`, but the presentation system is still minimal.
+- Status: completed through `dipsy_dolphin/ui/dialogue_presenter.py`, `dipsy_dolphin/ui/presentation_policy.py`, and the queued staged-reveal bubble flow in `dipsy_dolphin/ui/app.py`.
 
-10. Expand memory beyond name and interests
+10. Expand memory beyond name and interests [done]
 
 - Split memory into profile, session, long-term facts, preferences, execution history, and tool context.
 - Make memory inspectable and deletable by the user.
-- Add versioned storage so the schema can grow safely.
 - Done when: Dipsy can remember multiple categories of user information across sessions.
+- Status: completed through `dipsy_dolphin/core/memory.py`, `dipsy_dolphin/storage/memory_store.py`, the `memory_updates` turn contract, prompt wiring, and the new memory menu actions in `dipsy_dolphin/ui/app.py`.
 
 11. Add TTS voice output
 

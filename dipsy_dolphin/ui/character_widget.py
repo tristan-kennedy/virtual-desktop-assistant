@@ -75,6 +75,7 @@ class CharacterWidget(QWidget):
         patterns = {
             "idle": (0, 1, 0, -1),
             "walk": (0, 3, 0, -2),
+            "loading": (0, -1, 1, -2, 2, -1),
             "talk": (0, 1, 0, -1),
             "think": (0, 0, 1, 0, -1),
             "laugh": (0, 2, 1, -1, -2),

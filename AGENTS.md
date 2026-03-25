@@ -40,6 +40,7 @@ The runtime is now LLM-first: the UI prompts a bundled local model, parses the r
 - Keep packaging and CI files out of `dipsy_dolphin/`.
 - Use `TODO.md` as the default roadmap unless the user asks for a different priority.
 - Prefer deterministic validation around model output and action routing.
+- Prefer simplifying runtime contracts over preserving backward compatibility unless the user explicitly asks for compatibility.
 - Do not reintroduce large scripted fallback conversation paths unless the user explicitly asks for them.
 - Add tests for new non-trivial logic when practical.
 

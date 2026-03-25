@@ -1,4 +1,5 @@
 from dipsy_dolphin.core.controller import AssistantController
+from dipsy_dolphin.core.emotion import EmotionState
 from dipsy_dolphin.core.models import SessionState
 
 
@@ -19,8 +20,16 @@ class StubProvider:
         return {
             "say": "I am fully awake and ready to loiter theatrically.",
             "animation": "excited",
-            "speech_style": "normal",
+            "dialogue_category": "normal",
             "action": {"action_id": "roam_somewhere", "args": {}},
+            "emotion": {
+                "mood": 72,
+                "energy": 80,
+                "excitement": 78,
+                "confidence": 66,
+                "boredom": 14,
+                "familiarity": 18,
+            },
             "cooldown_ms": 14000,
             "topic": "startup",
         }
@@ -46,7 +55,7 @@ class SilentActionProvider(StubProvider):
         return {
             "say": "",
             "animation": "idle",
-            "speech_style": "normal",
+            "dialogue_category": "normal",
             "action": {"action_id": "idle", "args": {}},
             "cooldown_ms": 12000,
             "topic": "action",
@@ -58,7 +67,7 @@ class LongReplyProvider(StubProvider):
         return {
             "say": "A" * 500,
             "animation": "talk",
-            "speech_style": "normal",
+            "dialogue_category": "normal",
             "action": None,
             "cooldown_ms": 12000,
             "topic": "chat",
@@ -69,11 +78,48 @@ class SilentEmoteProvider(StubProvider):
     def generate(self, *, system_prompt: str, user_prompt: str) -> dict[str, object]:
         return {
             "say": "",
-            "animation": "think",
-            "speech_style": "normal",
+            "animation": "surprised",
+            "dialogue_category": "thought",
             "action": None,
             "cooldown_ms": 12000,
             "behavior": "emote",
+            "topic": "idle",
+        }
+
+
+class MemoryUpdateProvider(StubProvider):
+    def generate(self, *, system_prompt: str, user_prompt: str) -> dict[str, object]:
+        return {
+            "say": "Noted with theatrical seriousness.",
+            "dialogue_category": "normal",
+            "animation": "talk",
+            "memory_updates": [
+                {
+                    "action": "remember",
+                    "section": "preferences",
+                    "value": "likes shopping",
+                }
+            ],
+            "cooldown_ms": 12000,
+            "topic": "chat",
+        }
+
+
+class AutonomousMemoryProvider(StubProvider):
+    def generate(self, *, system_prompt: str, user_prompt: str) -> dict[str, object]:
+        return {
+            "say": "",
+            "dialogue_category": "thought",
+            "animation": "think",
+            "memory_updates": [
+                {
+                    "action": "remember",
+                    "section": "preferences",
+                    "value": "likes shopping",
+                }
+            ],
+            "behavior": "emote",
+            "cooldown_ms": 12000,
             "topic": "idle",
         }
 
@@ -86,11 +132,20 @@ def test_controller_uses_llm_turn_when_provider_is_available() -> None:
 
     assert result.turn.say == "I am fully awake and ready to loiter theatrically."
     assert result.turn.animation == "excited"
+    assert result.turn.dialogue_category == "normal"
     assert result.turn.action is not None
     assert result.turn.action.action_id == "roam_somewhere"
     assert state.last_assistant_line == ""
     assert result.session_state is not None
     assert result.session_state.last_assistant_line == result.turn.say
+    assert result.session_state.emotion == EmotionState(
+        mood=72,
+        energy=80,
+        excitement=78,
+        confidence=66,
+        boredom=14,
+        familiarity=18,
+    )
 
 
 def test_do_something_turn_forces_visible_response() -> None:
@@ -125,6 +180,16 @@ def test_controller_does_not_clip_normal_long_reply_lengths() -> None:
     assert len(result.turn.say) == 500
 
 
+def test_chat_turn_applies_llm_memory_updates() -> None:
+    controller = AssistantController(provider=MemoryUpdateProvider())
+    state = SessionState()
+
+    result = controller.handle_user_message("I really like to shop", state)
+
+    assert result.session_state is not None
+    assert result.session_state.memory.values_for("preferences") == ["likes shopping"]
+
+
 def test_autonomous_turn_preserves_silent_emote() -> None:
     controller = AssistantController(provider=SilentEmoteProvider())
     state = SessionState()
@@ -132,7 +197,18 @@ def test_autonomous_turn_preserves_silent_emote() -> None:
     result = controller.autonomous_turn(state)
 
     assert result.turn.say == ""
-    assert result.turn.animation == "think"
+    assert result.turn.animation == "surprised"
     assert result.turn.action is None
+    assert result.turn.behavior == "emote"
     assert result.session_state is not None
     assert result.session_state.last_autonomous_behavior == "emote"
+
+
+def test_autonomous_turn_does_not_apply_memory_updates() -> None:
+    controller = AssistantController(provider=AutonomousMemoryProvider())
+    state = SessionState()
+
+    result = controller.autonomous_turn(state)
+
+    assert result.session_state is not None
+    assert result.session_state.memory.values_for("preferences") == []

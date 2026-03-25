@@ -8,6 +8,7 @@ import signal
 import sys
 import time
 from typing import Callable, Optional
+from uuid import uuid4
 
 if sys.platform == "win32":
     import ctypes
@@ -25,14 +26,33 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core.autonomy import choose_autonomy_plan, seconds_since_user_interaction
+from ..core.autonomy import schedule_autonomy, seconds_since_user_interaction
 from ..core.controller import AssistantController
 from ..core.controller_models import AssistantTurn, ControllerResult
+from ..core.memory import (
+    DEFAULT_USER_NAME,
+    MEMORY_SECTIONS,
+    AssistantMemory,
+    clear_identity_memory,
+    clear_memory_section,
+    migrate_legacy_profile_identity,
+)
 from ..core.models import SessionState
+from ..storage.memory_store import MemoryStore
 from ..storage.profile_store import ProfileStore
+from ..voice.models import SpeechEvent, SpeechRequest
+from ..voice.service import VoiceService
 from .animation_state_machine import AnimationStateMachine
 from .character_widget import CharacterWidget
+from .dialogue_presenter import DialoguePresenter
 from .presentation_controller import PresentationController
+from .presentation_models import BubbleStyle, ResolvedTurnPresentation
+from .presentation_policy import (
+    resolve_busy_note_presentation,
+    resolve_loading_presentation,
+    resolve_turn_presentation,
+    resolve_waiting_presentation,
+)
 
 
 class BubbleWindow(QWidget):
@@ -53,13 +73,7 @@ class BubbleWindow(QWidget):
 
         frame = QFrame()
         frame.setObjectName("bubbleFrame")
-        frame.setStyleSheet(
-            "QFrame#bubbleFrame {"
-            "background: #FFF7E6;"
-            "border: 2px solid #1B263B;"
-            "border-radius: 12px;"
-            "}"
-        )
+        self.frame = frame
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(10, 8, 10, 8)
 
@@ -67,13 +81,27 @@ class BubbleWindow(QWidget):
         self.label.setWordWrap(True)
         self.label.setMinimumWidth(220)
         self.label.setMaximumWidth(420)
-        self.label.setStyleSheet("color: #102226;")
         self.label.setFont(QFont("Segoe UI", 10))
         frame_layout.addWidget(self.label)
 
         layout.addWidget(frame)
+        self._active_style = BubbleStyle()
+        self.apply_style(BubbleStyle())
 
-    def show_text(self, text: str) -> None:
+    def apply_style(self, style: BubbleStyle) -> None:
+        self._active_style = style
+        self.frame.setStyleSheet(
+            "QFrame#bubbleFrame {"
+            f"background: {style.background_color};"
+            f"border: 2px {style.border_style} {style.border_color};"
+            "border-radius: 12px;"
+            "}"
+        )
+        self.label.setStyleSheet(f"color: {style.text_color};")
+
+    def show_text(self, text: str, style: BubbleStyle | None = None) -> None:
+        if style is not None:
+            self.apply_style(style)
         self.ensurePolished()
         label_width = self._target_label_width(text)
         self.label.setFixedWidth(label_width)
@@ -85,14 +113,16 @@ class BubbleWindow(QWidget):
         self.setFixedSize(target_size)
 
     def _target_label_width(self, text: str) -> int:
+        min_width = self._active_style.min_width
+        max_width = self._active_style.max_width
         length = len(text.strip())
         if length <= 50:
-            return 240
+            return min_width
         if length <= 110:
-            return 300
+            return min(max_width, min_width + 60)
         if length <= 180:
-            return 360
-        return 420
+            return min(max_width, min_width + 120)
+        return max_width
 
     def _target_label_height(self, text: str, width: int) -> int:
         metrics = QFontMetrics(self.label.font())
@@ -112,11 +142,20 @@ class ControllerTaskBridge(QObject):
     failed = Signal(str)
 
 
+class VoiceEventBridge(QObject):
+    received = Signal(object)
+
+
 @dataclass
 class PendingControllerRequest:
     name: str
     on_result: Callable[[ControllerResult], None]
-    show_progress: bool
+    progress_mode: str
+
+
+PENDING_PROGRESS_NONE = "none"
+PENDING_PROGRESS_LLM_WAIT = "llm_wait"
+PENDING_PROGRESS_STARTUP_LOAD = "startup_load"
 
 
 class AssistantApp(QWidget):
@@ -141,11 +180,17 @@ class AssistantApp(QWidget):
         self._runtime_shutdown = False
         self._pending_request: PendingControllerRequest | None = None
         self._request_counter = 0
-        self.current_speech_style: Optional[str] = None
+        self.current_dialogue_category: Optional[str] = None
+        self._active_voice_utterances: set[str] = set()
+        self._last_voice_selection_note = ""
+        self._pending_voice_requests: dict[str, SpeechRequest] = {}
+        self._started_voice_requests: set[str] = set()
+        self.dialogue_presenter = DialoguePresenter()
 
         self.controller = AssistantController()
         self.profile_store = profile_store or ProfileStore()
-        self.session = SessionState(profile=self.profile_store.load_profile())
+        self.memory_store = MemoryStore(app_data_dir=self.profile_store.app_data_dir)
+        self.session = self._load_session_state()
 
         self.animation_state_machine = AnimationStateMachine()
         self.presentation_controller = PresentationController()
@@ -159,29 +204,33 @@ class AssistantApp(QWidget):
         self.bubble_hide_timer = QTimer(self)
         self.bubble_hide_timer.setSingleShot(True)
         self.bubble_hide_timer.timeout.connect(self._on_bubble_timeout)
-        self._llm_progress_timer = QTimer(self)
-        self._llm_progress_timer.setSingleShot(True)
-        self._llm_progress_timer.timeout.connect(self._on_llm_progress_timeout)
+        self.dialogue_reveal_timer = QTimer(self)
+        self.dialogue_reveal_timer.setSingleShot(True)
+        self.dialogue_reveal_timer.timeout.connect(self._on_dialogue_reveal_timeout)
         self._controller_task_bridge = ControllerTaskBridge(self)
         self._controller_task_bridge.completed.connect(self._on_controller_task_completed)
         self._controller_task_bridge.failed.connect(self._on_controller_task_failed)
+        self._voice_event_bridge = VoiceEventBridge(self)
+        self._voice_event_bridge.received.connect(self._on_voice_event)
         self._controller_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="dipsy-llm"
         )
+        self.voice_service = VoiceService(event_callback=self._voice_event_bridge.received.emit)
 
         self.menu = QMenu(self)
         self.menu.setStyleSheet(
             "QMenu { background: #102226; color: #F1FAEE; border: 1px solid #1B263B; }"
             "QMenu::item:selected { background: #F4A261; color: #111111; }"
         )
+        self.menu.aboutToShow.connect(self._refresh_menu_state)
         self._build_context_menu()
 
         self.wander_timer = QTimer(self)
         self.wander_timer.timeout.connect(self._wander_tick)
 
-        self.idle_chatter_timer = QTimer(self)
-        self.idle_chatter_timer.setSingleShot(True)
-        self.idle_chatter_timer.timeout.connect(self._idle_chatter_tick)
+        self.autonomy_timer = QTimer(self)
+        self.autonomy_timer.setSingleShot(True)
+        self.autonomy_timer.timeout.connect(self._autonomy_timer_tick)
 
         self.keep_on_top_timer = QTimer(self)
         self.keep_on_top_timer.timeout.connect(self._keep_on_top_tick)
@@ -196,7 +245,7 @@ class AssistantApp(QWidget):
             QTimer.singleShot(900, self._start_onboarding)
 
         self.wander_timer.start(70)
-        self._schedule_idle_chatter()
+        self._arm_autonomy_timer()
         self.keep_on_top_timer.start(2400)
 
     def _build_context_menu(self) -> None:
@@ -216,9 +265,45 @@ class AssistantApp(QWidget):
         status_action.triggered.connect(self._show_status)
         self.menu.addAction(status_action)
 
+        show_memory_action = QAction("Show Memory", self)
+        show_memory_action.triggered.connect(self._show_memory)
+        self.menu.addAction(show_memory_action)
+
+        forget_memory_action = QAction("Forget Memory", self)
+        forget_memory_action.triggered.connect(self._forget_memory)
+        self.menu.addAction(forget_memory_action)
+
         reset_action = QAction("Reset Session", self)
         reset_action.triggered.connect(self._reset_session)
         self.menu.addAction(reset_action)
+
+        self.menu.addSeparator()
+
+        voice_menu = self.menu.addMenu("Voice")
+
+        self.voice_toggle_action = QAction(self)
+        self.voice_toggle_action.triggered.connect(self._toggle_voice_enabled)
+        voice_menu.addAction(self.voice_toggle_action)
+
+        voice_select_action = QAction("Select Retro Voice", self)
+        voice_select_action.triggered.connect(self._select_voice)
+        voice_menu.addAction(voice_select_action)
+
+        voice_rate_action = QAction("Set Voice Rate", self)
+        voice_rate_action.triggered.connect(self._set_voice_rate)
+        voice_menu.addAction(voice_rate_action)
+
+        voice_volume_action = QAction("Set Voice Volume", self)
+        voice_volume_action.triggered.connect(self._set_voice_volume)
+        voice_menu.addAction(voice_volume_action)
+
+        voice_pitch_action = QAction("Set Voice Pitch", self)
+        voice_pitch_action.triggered.connect(self._set_voice_pitch)
+        voice_menu.addAction(voice_pitch_action)
+
+        voice_preview_action = QAction("Preview Voice", self)
+        voice_preview_action.triggered.connect(self._preview_voice)
+        voice_menu.addAction(voice_preview_action)
 
         self.menu.addSeparator()
 
@@ -256,17 +341,209 @@ class AssistantApp(QWidget):
             "startup",
             lambda session=copy.deepcopy(self.session): self.controller.startup_turn(session),
             lambda result: self._perform_controller_result(result),
+            progress_mode=PENDING_PROGRESS_STARTUP_LOAD,
         )
+
+    def _load_session_state(self) -> SessionState:
+        profile = self.profile_store.load_profile()
+        memory = self.memory_store.load_memory()
+        migrated_memory, migrated = migrate_legacy_profile_identity(
+            memory,
+            user_name=profile.user_name,
+            interests=profile.interests,
+            has_met_user=profile.has_met_user,
+        )
+        session = SessionState(profile=profile, memory=migrated_memory)
+        if migrated:
+            self.memory_store.save_memory(session.memory)
+            self.profile_store.save_profile(session.profile)
+        return session
 
     def _persist_profile(self) -> None:
         self.profile_store.save_profile(self.session.profile)
+
+    def _persist_memory(self) -> None:
+        if self.session.memory.has_entries():
+            self.memory_store.save_memory(self.session.memory)
+            return
+        self.memory_store.delete_memory()
+
+    def _refresh_menu_state(self) -> None:
+        voice_status = "Disable Voice" if self.session.profile.voice.enabled else "Enable Voice"
+        if not self.voice_service.is_available():
+            voice_status += " (Unavailable)"
+        self.voice_toggle_action.setText(voice_status)
+
+    def _toggle_voice_enabled(self) -> None:
+        voice = self.session.profile.voice.bounded()
+        self.session.profile.voice = voice.__class__(
+            enabled=not voice.enabled,
+            profile=voice.profile,
+            voice_id=voice.voice_id,
+            rate=voice.rate,
+            volume=voice.volume,
+            pitch=voice.pitch,
+        )
+        self._persist_profile()
+        if not self.session.profile.voice.enabled:
+            self.voice_service.stop(clear_queue=True)
+
+    def _select_voice(self) -> None:
+        voices = self.voice_service.list_voices()
+        if not voices:
+            QMessageBox.information(
+                self,
+                "Voice Selection",
+                self.voice_service.status_reason or "No Windows speech voices were found.",
+            )
+            return
+
+        choices = ["Automatic retro voice"] + [voice.name for voice in voices]
+        current_id = self.session.profile.voice.voice_id
+        current_index = 0
+        for index, voice in enumerate(voices, start=1):
+            if voice.voice_id == current_id:
+                current_index = index
+                break
+
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Select Retro Voice",
+            "Pick a Windows voice. Automatic keeps the best retro match.",
+            choices,
+            current_index,
+            False,
+        )
+        if not accepted:
+            return
+
+        selected_voice_id = ""
+        for voice in voices:
+            if voice.name == choice:
+                selected_voice_id = voice.voice_id
+                break
+        voice_settings = self.session.profile.voice.bounded()
+        self.session.profile.voice = voice_settings.__class__(
+            enabled=voice_settings.enabled,
+            profile=voice_settings.profile,
+            voice_id=selected_voice_id,
+            rate=voice_settings.rate,
+            volume=voice_settings.volume,
+            pitch=voice_settings.pitch,
+        )
+        self._persist_profile()
+
+    def _set_voice_rate(self) -> None:
+        voice_settings = self.session.profile.voice.bounded()
+        rate, accepted = QInputDialog.getInt(
+            self,
+            "Voice Rate",
+            "Set retro speech rate (-10 to 10):",
+            voice_settings.rate,
+            -10,
+            10,
+        )
+        if not accepted:
+            return
+        self.session.profile.voice = voice_settings.__class__(
+            enabled=voice_settings.enabled,
+            profile=voice_settings.profile,
+            voice_id=voice_settings.voice_id,
+            rate=rate,
+            volume=voice_settings.volume,
+            pitch=voice_settings.pitch,
+        )
+        self._persist_profile()
+
+    def _set_voice_volume(self) -> None:
+        voice_settings = self.session.profile.voice.bounded()
+        volume, accepted = QInputDialog.getInt(
+            self,
+            "Voice Volume",
+            "Set retro speech volume (0 to 100):",
+            voice_settings.volume,
+            0,
+            100,
+        )
+        if not accepted:
+            return
+        self.session.profile.voice = voice_settings.__class__(
+            enabled=voice_settings.enabled,
+            profile=voice_settings.profile,
+            voice_id=voice_settings.voice_id,
+            rate=voice_settings.rate,
+            volume=volume,
+            pitch=voice_settings.pitch,
+        )
+        self._persist_profile()
+
+    def _set_voice_pitch(self) -> None:
+        voice_settings = self.session.profile.voice.bounded()
+        pitch, accepted = QInputDialog.getInt(
+            self,
+            "Voice Pitch",
+            "Set retro speech pitch (-10 to 10):",
+            voice_settings.pitch,
+            -10,
+            10,
+        )
+        if not accepted:
+            return
+        self.session.profile.voice = voice_settings.__class__(
+            enabled=voice_settings.enabled,
+            profile=voice_settings.profile,
+            voice_id=voice_settings.voice_id,
+            rate=voice_settings.rate,
+            volume=voice_settings.volume,
+            pitch=pitch,
+        )
+        self._persist_profile()
+
+    def _preview_voice(self) -> None:
+        preview_voice = self.session.profile.voice.bounded()
+        preview_request = SpeechRequest(
+            utterance_id=f"preview-{uuid4().hex}",
+            text="Observe this tiny burst of retro dolphin theater.",
+            category="status",
+            settings=preview_voice.__class__(
+                enabled=True,
+                profile=preview_voice.profile,
+                voice_id=preview_voice.voice_id,
+                rate=preview_voice.rate,
+                volume=preview_voice.volume,
+                pitch=preview_voice.pitch,
+            ),
+        )
+        self.voice_service.speak(preview_request)
+
+    def _memory_sections_for_display(self, memory: AssistantMemory) -> list[tuple[str, list[str]]]:
+        labels = {
+            "long_term_facts": "Long-Term Facts",
+            "preferences": "Preferences",
+            "execution_history": "Execution History",
+            "tool_context": "Tool Context",
+        }
+        sections: list[tuple[str, list[str]]] = []
+        identity_lines: list[str] = []
+        if memory.identity.user_name != DEFAULT_USER_NAME:
+            identity_lines.append(f"Name: {memory.identity.user_name}")
+        if memory.identity.interests:
+            identity_lines.append("Interests: " + ", ".join(memory.identity.interest_values()))
+        if identity_lines:
+            sections.append(("Onboarding", identity_lines))
+        for section in MEMORY_SECTIONS:
+            values = memory.values_for(section)
+            if values:
+                sections.append((labels[section], values))
+        return sections
 
     def _apply_presentation(self) -> None:
         self.presentation_controller.set_animation_state(
             self.animation_state_machine.current_state(self._now_ms())
         )
         self.presentation_controller.set_facing(self.animation_state_machine.facing)
-        self.presentation_controller.set_speech_style(self.current_speech_style)
+        self.presentation_controller.set_dialogue_category(self.current_dialogue_category)
+        self.presentation_controller.set_emotion(self.session.emotion)
         self.character_widget.set_presentation(self.presentation_controller.resolve())
 
     def _request_animation(
@@ -310,7 +587,7 @@ class AssistantApp(QWidget):
         task: Callable[[], ControllerResult],
         on_result: Callable[[ControllerResult], None],
         *,
-        show_thinking: bool = True,
+        progress_mode: str = PENDING_PROGRESS_LLM_WAIT,
     ) -> bool:
         if self._closing or self._pending_request is not None:
             return False
@@ -319,16 +596,16 @@ class AssistantApp(QWidget):
         self._pending_request = PendingControllerRequest(
             name=label,
             on_result=on_result,
-            show_progress=show_thinking,
+            progress_mode=progress_mode,
         )
-        self.bubble_hide_timer.stop()
-        self._llm_progress_timer.stop()
-        self.bubble_window.hide()
-        self.current_speech_style = None
+        self._clear_dialogue_state(stop_voice=True)
         self._clear_animation_overlay()
-        if show_thinking:
-            self._request_animation("think", duration_ms=1600, force=True)
-            self._llm_progress_timer.start(2500)
+        if progress_mode == PENDING_PROGRESS_LLM_WAIT:
+            waiting_cue = resolve_waiting_presentation(emotion=self.session.emotion)
+            self._request_animation(waiting_cue.animation_state, duration_ms=1600, force=True)
+        elif progress_mode == PENDING_PROGRESS_STARTUP_LOAD:
+            loading_cue = resolve_loading_presentation(emotion=self.session.emotion)
+            self._request_animation(loading_cue.animation_state, duration_ms=1600, force=True)
         self._debug_log(f"request#{self._request_counter} submitted: {label}")
 
         future = self._controller_executor.submit(task)
@@ -353,7 +630,10 @@ class AssistantApp(QWidget):
             return
 
         self._pending_request = None
-        self._llm_progress_timer.stop()
+        self._clear_dialogue_state()
+        if pending_request.name.startswith("autonomous") and result.session_state is not None:
+            behavior = result.turn.behavior or result.session_state.last_autonomous_behavior
+            result.session_state.record_autonomous_timing(behavior, self._now_ms())
         self._apply_session_state(result.session_state)
         self._debug_log(
             f"completed: {pending_request.name} -> say={bool(result.turn.say)} action={getattr(result.turn.action, 'action_id', None)} animation={result.turn.animation}"
@@ -369,35 +649,29 @@ class AssistantApp(QWidget):
             self._pending_request.name if self._pending_request is not None else "request"
         )
         self._pending_request = None
-        self._llm_progress_timer.stop()
-        self.current_speech_style = None
+        self._clear_dialogue_state(stop_voice=True)
         if request_name.startswith("onboarding"):
             self.onboarding_active = False
         self._debug_log(f"failed: {request_name} -> {message}")
         self._clear_animation_overlay()
         self._sync_presentation_to_motion()
+        self._arm_autonomy_timer()
         QMessageBox.critical(
             self,
             "Dipsy Dolphin",
             f"The local brain failed during {request_name}.\n\n{message}",
         )
 
-    def _on_llm_progress_timeout(self) -> None:
-        if self._pending_request is None or not self._pending_request.show_progress:
-            return
-        self.bubble_window.show_text("Thinking...")
-        self._position_bubble()
-        self.bubble_window.show()
-        self.bubble_window.raise_()
-
     def _show_busy_note(self) -> None:
+        busy_cue = resolve_busy_note_presentation(emotion=self.session.emotion)
         self._speak(
             "One thought at a time. I am still working on the last one.",
-            duration_ms=2600,
-            style="alert",
+            cue=busy_cue,
+            hold_ms=2600,
         )
 
     def _perform_turn(self, turn: AssistantTurn, schedule_idle: bool = False) -> None:
+        cue = resolve_turn_presentation(turn, emotion=self.session.emotion)
         self._debug_log(
             f"apply turn: say={turn.say!r} animation={turn.animation} action={getattr(turn.action, 'action_id', None)} cooldown={turn.cooldown_ms}"
         )
@@ -405,35 +679,67 @@ class AssistantApp(QWidget):
             self._start_walk_action()
 
         if turn.say:
-            self._speak(
-                turn.say,
-                duration_ms=self._duration_for_line(turn.say, turn.speech_style),
-                style=turn.speech_style,
-            )
-        elif turn.animation not in {"idle", "walk"}:
-            self._request_animation(turn.animation, duration_ms=1800, force=True)
+            self._speak(turn.say, cue=cue)
+        elif cue.animation_state not in {"idle", "walk"}:
+            self._request_animation(cue.animation_state, duration_ms=1800, force=True)
         else:
             self._sync_presentation_to_motion()
 
         if schedule_idle:
-            self._schedule_idle_chatter(turn.cooldown_ms)
+            self._arm_autonomy_timer()
 
-    def _duration_for_line(self, text: str, style: str) -> int:
-        words = max(1, len(text.split()))
-        base = 3200 + words * 360
-        base += min(9000, len(text) * 16)
-        if style in {"status", "onboarding"}:
-            base += 1200
-        return max(3800, min(40000, base))
+    def _on_voice_event(self, event: SpeechEvent) -> None:
+        if event.event_type == "voice_selected":
+            if event.message:
+                self._last_voice_selection_note = event.message
+            if event.used_fallback:
+                self._debug_log(
+                    f"voice fallback: {event.voice_name or event.voice_id} ({event.message or 'closest retro match'})"
+                )
+            return
 
-    def _speech_animation_state(self, style: str) -> str:
-        if style == "joke":
-            return "laugh"
-        if style == "spark":
-            return "excited"
-        if style in {"question", "onboarding", "alert"}:
-            return "surprised"
-        return "talk"
+        if event.event_type == "started":
+            self._active_voice_utterances.add(event.utterance_id)
+            self._sync_voice_animation(event.utterance_id, duration_ms=700)
+            return
+
+        if event.event_type == "word":
+            self._sync_voice_animation(event.utterance_id, duration_ms=420)
+            return
+
+        if event.event_type in {"finished", "cancelled", "failed"}:
+            self._active_voice_utterances.discard(event.utterance_id)
+            self._pending_voice_requests.pop(event.utterance_id, None)
+            self._started_voice_requests.discard(event.utterance_id)
+            if event.event_type == "failed" and event.message:
+                self._debug_log(f"voice failed: {event.message}")
+            active_item = self.dialogue_presenter.active_item
+            if (
+                active_item is not None
+                and active_item.utterance_id == event.utterance_id
+                and not self.dialogue_presenter.has_more_reveal()
+                and not self.bubble_hide_timer.isActive()
+            ):
+                self.bubble_hide_timer.start(250)
+
+    def _sync_voice_animation(self, utterance_id: str, *, duration_ms: int) -> None:
+        active_item = self.dialogue_presenter.active_item
+        if active_item is None or active_item.utterance_id != utterance_id:
+            return
+        self._request_animation("talk", duration_ms=duration_ms, force=True)
+
+    def _ensure_active_voice(self) -> None:
+        active_item = self.dialogue_presenter.active_item
+        if active_item is None or not active_item.utterance_id:
+            return
+        if active_item.utterance_id in self._started_voice_requests:
+            return
+        request = self._pending_voice_requests.get(active_item.utterance_id)
+        if request is None:
+            return
+        started = self.voice_service.speak(request)
+        if started:
+            self._started_voice_requests.add(active_item.utterance_id)
 
     def _start_onboarding(self) -> None:
         if self.session.onboarding_complete or self.onboarding_active:
@@ -477,7 +783,7 @@ class AssistantApp(QWidget):
                 self.session.interests = parsed
 
         self.session.mark_profile_configured()
-        self._persist_profile()
+        self._persist_memory()
         self.onboarding_active = False
         self._submit_controller_task(
             "onboarding finish",
@@ -501,24 +807,31 @@ class AssistantApp(QWidget):
 
         self._note_user_interaction()
         profile_before = (self.session.user_name, tuple(self.session.interests))
+        memory_before = copy.deepcopy(self.session.memory)
         submitted = self._submit_controller_task(
             "chat reply",
             lambda session=copy.deepcopy(self.session): self.controller.handle_user_message(
                 user_text, session
             ),
-            lambda result: self._handle_chat_result(result, profile_before),
+            lambda result: self._handle_chat_result(result, profile_before, memory_before),
         )
         if not submitted:
             self._show_busy_note()
 
     def _handle_chat_result(
-        self, result: ControllerResult, profile_before: tuple[str, tuple[str, ...]]
+        self,
+        result: ControllerResult,
+        profile_before: tuple[str, tuple[str, ...]],
+        memory_before: AssistantMemory,
     ) -> None:
         profile_after = (self.session.user_name, tuple(self.session.interests))
 
         if profile_after != profile_before:
             self.session.mark_profile_configured()
-            self._persist_profile()
+            self._persist_memory()
+
+        if self.session.memory != memory_before:
+            self._persist_memory()
 
         self._perform_controller_result(result, schedule_idle=True)
 
@@ -552,6 +865,44 @@ class AssistantApp(QWidget):
         if not submitted:
             self._show_busy_note()
 
+    def _show_memory(self) -> None:
+        sections = self._memory_sections_for_display(self.session.memory)
+        if not sections:
+            QMessageBox.information(
+                self, "Dipsy Memory", "Dipsy is not holding onto any saved memory yet."
+            )
+            return
+
+        lines: list[str] = []
+        for title, values in sections:
+            lines.append(f"{title}:")
+            lines.extend(f"- {value}" for value in values)
+            lines.append("")
+        QMessageBox.information(self, "Dipsy Memory", "\n".join(lines).strip())
+
+    def _forget_memory(self) -> None:
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Forget Memory",
+            "What should Dipsy forget?",
+            ["All Memory", "Onboarding", "Long-Term Facts", "Preferences"],
+            0,
+            False,
+        )
+        if not accepted:
+            return
+
+        if choice == "All Memory":
+            self.session.memory = AssistantMemory()
+        elif choice == "Onboarding":
+            self.session.memory = clear_identity_memory(self.session.memory)
+        elif choice == "Long-Term Facts":
+            self.session.memory = clear_memory_section(self.session.memory, "long_term_facts")
+        elif choice == "Preferences":
+            self.session.memory = clear_memory_section(self.session.memory, "preferences")
+        self.session.onboarding_complete = self.session.memory.identity.is_configured()
+        self._persist_memory()
+
     def _reset_session(self) -> None:
         if self._pending_request is not None:
             return
@@ -567,6 +918,7 @@ class AssistantApp(QWidget):
 
     def _handle_reset_result(self, result: ControllerResult) -> None:
         self.profile_store.delete_profile()
+        self.memory_store.delete_memory()
         self._perform_controller_result(result)
         QTimer.singleShot(700, self._start_onboarding)
 
@@ -579,11 +931,27 @@ class AssistantApp(QWidget):
         self._sync_presentation_to_motion()
         return True
 
-    def _schedule_idle_chatter(self, cooldown_ms: Optional[int] = None) -> None:
-        interval = (
-            cooldown_ms if cooldown_ms is not None else max(7000, self.session.autonomy_cooldown_ms)
+    def _arm_autonomy_timer(self, delay_ms: Optional[int] = None) -> None:
+        if self._closing:
+            return
+        interval = delay_ms if delay_ms is not None else self._next_autonomy_delay_ms()
+        self.autonomy_timer.start(max(1000, interval))
+
+    def _next_autonomy_delay_ms(self) -> int:
+        if not self.session.onboarding_complete or self.onboarding_active:
+            return 1500
+        decision = schedule_autonomy(self.session, self._now_ms())
+        return decision.next_delay_ms
+
+    def _autonomy_blocked(self) -> bool:
+        return (
+            not self.session.onboarding_complete
+            or self.onboarding_active
+            or self.dragging
+            or self.walk_active
+            or self.bubble_window.isVisible()
+            or self._pending_request is not None
         )
-        self.idle_chatter_timer.start(interval)
 
     def _note_user_interaction(self) -> None:
         self.session.mark_user_interaction(self._now_ms())
@@ -613,31 +981,32 @@ class AssistantApp(QWidget):
         self._apply_presentation()
         self._position_bubble()
 
-    def _idle_chatter_tick(self) -> None:
-        if (
-            self.session.onboarding_complete
-            and not self.dragging
-            and not self.walk_active
-            and not self.bubble_window.isVisible()
-            and self._pending_request is None
-        ):
-            now_ms = self._now_ms()
-            autonomy_plan = choose_autonomy_plan(self.session, now_ms)
-            since_user = seconds_since_user_interaction(self.session, now_ms)
-            self._submit_controller_task(
-                f"autonomous {autonomy_plan.mode}",
-                lambda session=copy.deepcopy(self.session), plan=autonomy_plan: (
-                    self.controller.autonomous_turn(
-                        session,
-                        plan=plan,
-                        seconds_since_user_interaction=since_user,
-                    )
-                ),
-                lambda result: self._perform_controller_result(result, schedule_idle=True),
-                show_thinking=False,
-            )
+    def _autonomy_timer_tick(self) -> None:
+        if self._autonomy_blocked():
+            self._arm_autonomy_timer(1500)
             return
-        self._schedule_idle_chatter()
+
+        now_ms = self._now_ms()
+        decision = schedule_autonomy(self.session, now_ms)
+        if not decision.should_run or decision.plan is None:
+            self._arm_autonomy_timer(decision.next_delay_ms)
+            return
+
+        since_user = seconds_since_user_interaction(self.session, now_ms)
+        submitted = self._submit_controller_task(
+            f"autonomous {decision.plan.mode}",
+            lambda session=copy.deepcopy(self.session), plan=decision.plan: (
+                self.controller.autonomous_turn(
+                    session,
+                    plan=plan,
+                    seconds_since_user_interaction=since_user,
+                )
+            ),
+            lambda result: self._perform_controller_result(result, schedule_idle=True),
+            progress_mode=PENDING_PROGRESS_NONE,
+        )
+        if not submitted:
+            self._arm_autonomy_timer(1500)
 
     def _keep_on_top_tick(self) -> None:
         self.raise_()
@@ -680,23 +1049,99 @@ class AssistantApp(QWidget):
             self.animation_state_machine.set_base_state("walk", self._now_ms(), delta_x)
         self._apply_presentation()
 
-    def _on_bubble_timeout(self) -> None:
+    def _clear_dialogue_state(self, *, stop_voice: bool = False) -> None:
+        self.dialogue_reveal_timer.stop()
+        self.bubble_hide_timer.stop()
+        self.dialogue_presenter.clear()
+        self._pending_voice_requests.clear()
+        self._started_voice_requests.clear()
+        self._active_voice_utterances.clear()
+        if stop_voice:
+            self.voice_service.stop(clear_queue=True)
         self.bubble_window.hide()
-        self.current_speech_style = None
-        self._clear_animation_overlay()
-        self._sync_presentation_to_motion()
+        self.current_dialogue_category = None
 
-    def _speak(self, text: str, duration_ms: int = 5200, style: str = "normal") -> None:
-        self.current_speech_style = style
+    def _show_active_dialogue(self) -> None:
+        active_item = self.dialogue_presenter.active_item
+        if active_item is None:
+            self.bubble_window.hide()
+            self.current_dialogue_category = None
+            self._clear_animation_overlay()
+            self._sync_presentation_to_motion()
+            return
+
+        cue = active_item.cue
+        self.current_dialogue_category = cue.dialogue_category
+        active_animation = cue.animation_state
+        if active_animation in {"idle", "walk"}:
+            active_animation = "talk"
         self._request_animation(
-            self._speech_animation_state(style), duration_ms=duration_ms, force=True
+            active_animation,
+            duration_ms=self.dialogue_presenter.active_remaining_duration_ms(),
+            force=True,
         )
-        self.bubble_window.show_text(text)
+        self.bubble_window.show_text(self.dialogue_presenter.active_text(), cue.bubble_style)
         self.bubble_window.show()
         self.bubble_window.raise_()
         QApplication.processEvents()
         self._position_bubble()
-        self.bubble_hide_timer.start(duration_ms)
+        self._ensure_active_voice()
+
+        if self.dialogue_presenter.has_more_reveal():
+            self.dialogue_reveal_timer.start(self.dialogue_presenter.active_chunk_pause_ms())
+            self.bubble_hide_timer.stop()
+        else:
+            self.dialogue_reveal_timer.stop()
+            self.bubble_hide_timer.start(self.dialogue_presenter.active_hold_ms())
+
+    def _on_dialogue_reveal_timeout(self) -> None:
+        if not self.dialogue_presenter.advance_reveal():
+            return
+        self._show_active_dialogue()
+
+    def _on_bubble_timeout(self) -> None:
+        active_item = self.dialogue_presenter.active_item
+        if (
+            active_item is not None
+            and active_item.utterance_id
+            and active_item.utterance_id in self._active_voice_utterances
+        ):
+            self._request_animation("talk", duration_ms=320, force=True)
+            self.bubble_hide_timer.start(250)
+            return
+        if self.dialogue_presenter.finish_active():
+            self._show_active_dialogue()
+            return
+        self._clear_dialogue_state()
+        self._clear_animation_overlay()
+        self._sync_presentation_to_motion()
+
+    def _speak(
+        self,
+        text: str,
+        cue: ResolvedTurnPresentation | None = None,
+        hold_ms: int | None = None,
+    ) -> None:
+        if cue is None:
+            raise ValueError("Presentation cue is required for speech")
+        utterance_id = f"speech-{uuid4().hex}"
+        self._pending_voice_requests[utterance_id] = SpeechRequest(
+            utterance_id=utterance_id,
+            text=text,
+            category=cue.dialogue_category,
+            settings=self.session.profile.voice.bounded(),
+        )
+        action = self.dialogue_presenter.enqueue(
+            text,
+            cue,
+            hold_override_ms=hold_ms,
+            utterance_id=utterance_id,
+        )
+        if action == "drop":
+            self._pending_voice_requests.pop(utterance_id, None)
+            return
+        if action in {"start", "replace"}:
+            self._show_active_dialogue()
 
     def _position_bubble(self) -> None:
         self.bubble_window.ensurePolished()
@@ -745,13 +1190,16 @@ class AssistantApp(QWidget):
         self._runtime_shutdown = True
         if self.session.onboarding_complete:
             self._persist_profile()
+        self._persist_memory()
 
+        self.dialogue_reveal_timer.stop()
         self.bubble_hide_timer.stop()
-        self._llm_progress_timer.stop()
         self.wander_timer.stop()
-        self.idle_chatter_timer.stop()
+        self.autonomy_timer.stop()
         self.keep_on_top_timer.stop()
         self._pending_request = None
+        self.dialogue_presenter.clear()
+        self.voice_service.shutdown()
         self.controller.shutdown()
         self._controller_executor.shutdown(wait=False, cancel_futures=True)
         self.bubble_window.close()

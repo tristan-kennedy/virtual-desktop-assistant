@@ -23,4 +23,35 @@ class CharacterPresentation:
     facing: str = "right"
     active_effects: Tuple[str, ...] = field(default_factory=tuple)
     bob_offset: int = 0
+    accent_variant: str = "calm"
     style_variant: str = "flat-retro"
+
+
+@dataclass(frozen=True)
+class BubbleStyle:
+    style_id: str = "normal"
+    background_color: str = "#FFF7E6"
+    border_color: str = "#1B263B"
+    text_color: str = "#102226"
+    border_style: str = "solid"
+    min_width: int = 220
+    max_width: int = 420
+
+
+@dataclass(frozen=True)
+class DialogueDelivery:
+    reveal_mode: str = "staged"
+    chunk_chars: int = 28
+    chunk_pause_ms: int = 150
+    hold_ms: int = 2200
+    interrupt_priority: int = 3
+    queue_policy: str = "queue"
+    replaceable: bool = False
+
+
+@dataclass(frozen=True)
+class ResolvedTurnPresentation:
+    animation_state: str = "talk"
+    bubble_style: BubbleStyle = field(default_factory=BubbleStyle)
+    dialogue_category: str = "normal"
+    delivery: DialogueDelivery = field(default_factory=DialogueDelivery)

@@ -23,11 +23,11 @@
     "fx"
   ],
   "supported": {
-    "poses": ["idle", "walk", "talk", "think", "laugh", "surprised", "sad", "excited"],
+    "poses": ["idle", "walk", "loading", "talk", "think", "laugh", "surprised", "sad", "excited"],
     "expressions": ["neutral", "happy", "concerned"],
     "eye_states": ["open", "blink"],
     "mouth_states": ["closed", "talk_open"],
-    "effects": ["question", "spark", "sweat"]
+    "effects": ["question", "spark", "sweat", "loading"]
   },
   "notes": {
     "current_pass": "Flat stylized vector fallback to prove the presentation layer.",

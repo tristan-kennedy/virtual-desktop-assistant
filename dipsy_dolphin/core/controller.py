@@ -11,6 +11,8 @@ from ..llm.prompt_builder import build_system_prompt, build_user_prompt
 from ..llm.response_parser import parse_assistant_turn
 from .brain import AssistantBrain
 from .controller_models import ActionRequest, AssistantTurn, ControllerResult
+from .emotion import EmotionState
+from .memory import apply_memory_updates
 from .models import SessionState
 
 
@@ -43,7 +45,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="surprised" if not state.onboarding_complete else "talk",
-                speech_style="onboarding" if not state.onboarding_complete else "status",
+                dialogue_category="onboarding" if not state.onboarding_complete else "status",
                 cooldown_ms=9000,
                 topic="startup",
                 source="llm",
@@ -56,7 +58,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="surprised",
-                speech_style="onboarding",
+                dialogue_category="onboarding",
                 cooldown_ms=5000,
                 topic="onboarding",
                 source="llm",
@@ -69,7 +71,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="surprised",
-                speech_style="onboarding",
+                dialogue_category="onboarding",
                 cooldown_ms=6500,
                 topic="onboarding",
                 source="llm",
@@ -82,7 +84,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="excited",
-                speech_style="normal",
+                dialogue_category="onboarding",
                 cooldown_ms=9000,
                 topic="onboarding",
                 source="llm",
@@ -100,7 +102,7 @@ class AssistantController:
             user_text=clean,
             defaults=AssistantTurn(
                 animation="talk",
-                speech_style="normal",
+                dialogue_category="normal",
                 cooldown_ms=15000,
                 topic=state.last_topic or "chat",
                 source="llm",
@@ -134,7 +136,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="idle",
-                speech_style="normal",
+                dialogue_category="thought",
                 cooldown_ms=12000,
                 behavior=active_plan.mode,
                 topic=state.last_topic or "idle",
@@ -154,7 +156,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="excited",
-                speech_style="normal",
+                dialogue_category="normal",
                 cooldown_ms=12000,
                 behavior="action",
                 topic="action",
@@ -168,7 +170,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="laugh",
-                speech_style="joke",
+                dialogue_category="joke",
                 cooldown_ms=10000,
                 behavior="joke",
                 topic="joke",
@@ -182,7 +184,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="talk",
-                speech_style="status",
+                dialogue_category="status",
                 cooldown_ms=9000,
                 behavior="status",
                 topic="status",
@@ -196,7 +198,7 @@ class AssistantController:
             state,
             defaults=AssistantTurn(
                 animation="surprised",
-                speech_style="alert",
+                dialogue_category="alert",
                 cooldown_ms=5000,
                 behavior="reset",
                 topic="reset",
@@ -220,11 +222,16 @@ class AssistantController:
             self.brain.apply_profile_updates(user_text, working_state)
         elif event == "reset":
             self.brain.reset_state(working_state)
+        defaults = replace(defaults, emotion=working_state.emotion)
         system_prompt = build_system_prompt()
         user_prompt = build_user_prompt(event, working_state, user_text, context=event_context)
 
         try:
-            parsed_turn = self._request_turn(system_prompt=system_prompt, user_prompt=user_prompt)
+            parsed_turn = self._request_turn(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                fallback_emotion=working_state.emotion,
+            )
         except Exception as exc:
             raise RuntimeError(f"Local brain failed during '{event}': {exc}") from exc
 
@@ -245,13 +252,23 @@ class AssistantController:
             working_state.remember_autonomous_behavior(self._autonomous_behavior_for_turn(turn))
             if turn.say:
                 working_state.autonomous_chats += 1
+        if event == "chat" and turn.memory_updates:
+            working_state.memory = apply_memory_updates(working_state.memory, turn.memory_updates)
+        if turn.emotion is not None:
+            working_state.emotion = turn.emotion
         working_state.last_topic = turn.topic or working_state.last_topic
         working_state.autonomy_cooldown_ms = turn.cooldown_ms
         return ControllerResult(turn=turn, session_state=working_state)
 
-    def _request_turn(self, *, system_prompt: str, user_prompt: str) -> AssistantTurn:
+    def _request_turn(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        fallback_emotion: EmotionState,
+    ) -> AssistantTurn:
         payload = self.provider.generate(system_prompt=system_prompt, user_prompt=user_prompt)
-        return parse_assistant_turn(payload)
+        return parse_assistant_turn(payload, fallback_emotion=fallback_emotion)
 
     def _apply_defaults(
         self,
@@ -267,7 +284,9 @@ class AssistantController:
             parsed_turn,
             say=parsed_turn.say.strip(),
             animation=parsed_turn.animation or defaults.animation,
-            speech_style=parsed_turn.speech_style or defaults.speech_style,
+            dialogue_category=parsed_turn.dialogue_category or defaults.dialogue_category,
+            memory_updates=parsed_turn.memory_updates if event == "chat" else (),
+            emotion=parsed_turn.emotion or defaults.emotion,
             cooldown_ms=max(
                 parsed_turn.cooldown_ms or defaults.cooldown_ms, minimum_cooldown_ms or 0
             ),
@@ -290,7 +309,7 @@ class AssistantController:
                 say="Stand back. I am preparing a tasteful burst of desktop theater.",
                 animation="excited",
                 behavior=turn.behavior or defaults.behavior or "action",
-                speech_style="normal",
+                dialogue_category="normal",
                 topic=turn.topic or defaults.topic or "action",
             )
 
@@ -342,7 +361,6 @@ class AssistantController:
             and not turn.say
             and turn.animation
             in {
-                "think",
                 "laugh",
                 "surprised",
                 "sad",

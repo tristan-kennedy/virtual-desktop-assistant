@@ -3,7 +3,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..core.models import UserProfile
+from ..core.models import UserProfile, normalize_autonomy_pace
+from ..voice.models import coerce_voice_settings
 
 
 APP_DIR_NAME = "DipsyDolphin"
@@ -45,16 +46,33 @@ class ProfileStore:
                     interests.append(cleaned)
 
         has_met_user = bool(payload.get("has_met_user", False))
-        return UserProfile(user_name=user_name, interests=interests, has_met_user=has_met_user)
+        autonomy_enabled = bool(payload.get("autonomy_enabled", True))
+        autonomy_pace = normalize_autonomy_pace(payload.get("autonomy_pace", "normal"))
+        voice = coerce_voice_settings(payload.get("voice"))
+        return UserProfile(
+            user_name=user_name,
+            interests=interests,
+            has_met_user=has_met_user,
+            autonomy_enabled=autonomy_enabled,
+            autonomy_pace=autonomy_pace,
+            voice=voice,
+        )
 
     def save_profile(self, profile: UserProfile) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         payload = {
-            "profile_version": 1,
+            "profile_version": 2,
             "saved_at_utc": datetime.now(timezone.utc).isoformat(),
-            "user_name": profile.user_name,
-            "interests": profile.interests,
-            "has_met_user": profile.has_met_user,
+            "autonomy_enabled": profile.autonomy_enabled,
+            "autonomy_pace": profile.autonomy_pace,
+            "voice": {
+                "enabled": profile.voice.enabled,
+                "profile": profile.voice.profile,
+                "voice_id": profile.voice.voice_id,
+                "rate": profile.voice.rate,
+                "volume": profile.voice.volume,
+                "pitch": profile.voice.pitch,
+            },
         }
         self.profile_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return self.profile_path

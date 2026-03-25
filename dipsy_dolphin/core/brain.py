@@ -1,6 +1,8 @@
 import re
 from typing import List
 
+from .emotion import EmotionState
+from .memory import AssistantMemory
 from .models import SessionState
 
 
@@ -28,8 +30,10 @@ class AssistantBrain:
         state.user_name = "friend"
         state.interests.clear()
         state.profile.has_met_user = False
-        state.conversation_history.clear()
+        state.profile.user_name = "friend"
+        state.profile.interests.clear()
         state.turns.clear()
+        state.memory = AssistantMemory()
         state.onboarding_complete = False
         state.last_user_interaction_ms = 0
         state.autonomous_chats = 0
@@ -38,7 +42,10 @@ class AssistantBrain:
         state.recent_autonomous_behaviors.clear()
         state.last_topic = ""
         state.last_assistant_line = ""
+        state.last_autonomous_at_ms = 0
+        state.autonomous_behavior_times_ms.clear()
         state.autonomy_cooldown_ms = 0
+        state.emotion = EmotionState()
 
     def apply_profile_updates(self, text: str, state: SessionState) -> bool:
         updated = False

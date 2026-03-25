@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from .emotion import EmotionState
+from .memory import MemoryUpdate
 from .models import SessionState
 
 
@@ -13,9 +15,11 @@ class ActionRequest:
 @dataclass(frozen=True)
 class AssistantTurn:
     say: str = ""
-    animation: str = "talk"
-    speech_style: str = "normal"
+    animation: str = ""
+    dialogue_category: str = "normal"
     action: ActionRequest | None = None
+    memory_updates: tuple[MemoryUpdate, ...] = field(default_factory=tuple)
+    emotion: EmotionState | None = None
     cooldown_ms: int = 12000
     behavior: str = ""
     topic: str = ""
