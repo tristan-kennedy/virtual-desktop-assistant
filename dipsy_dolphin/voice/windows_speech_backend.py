@@ -37,7 +37,6 @@ $speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer
 if ([string]$payload.voice_id) {
     $speaker.SelectVoice([string]$payload.voice_id)
 }
-$speaker.Rate = [int]$payload.rate
 $speaker.Volume = [int]$payload.volume
 $utteranceId = [string]$payload.utterance_id
 $voiceName = [string]$speaker.Voice.Name
@@ -178,7 +177,6 @@ class WindowsSpeechBackend:
         payload = {
             "utterance_id": request.utterance_id,
             "voice_id": selection.option.voice_id,
-            "rate": request.settings.bounded().rate,
             "volume": request.settings.bounded().volume,
             "ssml": build_retro_ssml(
                 request.text,

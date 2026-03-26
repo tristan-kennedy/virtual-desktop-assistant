@@ -14,19 +14,17 @@ if sys.platform == "win32":
     import ctypes
 
 from PySide6.QtCore import QObject, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QFontMetrics, QMouseEvent
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
-    QFrame,
     QInputDialog,
     QLabel,
-    QMenu,
     QMessageBox,
     QVBoxLayout,
     QWidget,
 )
 
-from ..core.autonomy import schedule_autonomy, seconds_since_user_interaction
+from ..core.autonomy import schedule_autonomy
 from ..core.controller import AssistantController
 from ..core.controller_models import AssistantTurn, ControllerResult
 from ..core.memory import (
@@ -41,10 +39,13 @@ from ..core.models import SessionState
 from ..storage.memory_store import MemoryStore
 from ..storage.profile_store import ProfileStore
 from ..voice.models import SpeechEvent, SpeechRequest
+from ..voice.retro import estimate_retro_speech_duration_ms, estimate_retro_talk_pulse_ms
 from ..voice.service import VoiceService
 from .animation_state_machine import AnimationStateMachine
+from .bubble_layout import compute_bubble_placement
 from .character_widget import CharacterWidget
 from .dialogue_presenter import DialoguePresenter
+from .execution import apply_execution_result
 from .presentation_controller import PresentationController
 from .presentation_models import BubbleStyle, ResolvedTurnPresentation
 from .presentation_policy import (
@@ -56,6 +57,9 @@ from .presentation_policy import (
 
 
 class BubbleWindow(QWidget):
+    _tail_height = 16
+    _tail_half_width = 12
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowFlags(
@@ -68,36 +72,29 @@ class BubbleWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(14, 10, 14, 22)
         layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetFixedSize)
-
-        frame = QFrame()
-        frame.setObjectName("bubbleFrame")
-        self.frame = frame
-        frame_layout = QVBoxLayout(frame)
-        frame_layout.setContentsMargins(10, 8, 10, 8)
 
         self.label = QLabel()
         self.label.setWordWrap(True)
         self.label.setMinimumWidth(220)
         self.label.setMaximumWidth(420)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.label.setFont(QFont("Segoe UI", 10))
-        frame_layout.addWidget(self.label)
-
-        layout.addWidget(frame)
+        layout.addWidget(self.label)
         self._active_style = BubbleStyle()
+        self._tail_tip_x = 0
         self.apply_style(BubbleStyle())
 
     def apply_style(self, style: BubbleStyle) -> None:
         self._active_style = style
-        self.frame.setStyleSheet(
-            "QFrame#bubbleFrame {"
-            f"background: {style.background_color};"
-            f"border: 2px {style.border_style} {style.border_color};"
-            "border-radius: 12px;"
-            "}"
-        )
         self.label.setStyleSheet(f"color: {style.text_color};")
+        self.update()
+
+    def set_tail_tip_x(self, tip_x: int) -> None:
+        self._tail_tip_x = tip_x
+        self.update()
 
     def show_text(self, text: str, style: BubbleStyle | None = None) -> None:
         if style is not None:
@@ -111,6 +108,7 @@ class BubbleWindow(QWidget):
         self.adjustSize()
         target_size = self.sizeHint()
         self.setFixedSize(target_size)
+        self.update()
 
     def _target_label_width(self, text: str) -> int:
         min_width = self._active_style.min_width
@@ -135,6 +133,38 @@ class BubbleWindow(QWidget):
             text or " ",
         )
         return max(metrics.lineSpacing(), rect.height())
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        border_color = QColor(self._active_style.border_color)
+        background_color = QColor(self._active_style.background_color)
+        border_pen = QPen(border_color, 2)
+        painter.setPen(border_pen)
+        painter.setBrush(background_color)
+
+        body_rect = self.rect().adjusted(1, 1, -1, -self._tail_height - 1)
+
+        tail_base_center = max(
+            18 + self._tail_half_width,
+            min(self.width() - 18 - self._tail_half_width, self._tail_tip_x or self.width() // 2),
+        )
+        body_bottom = body_rect.bottom()
+        tail_left = tail_base_center - self._tail_half_width
+        tail_right = tail_base_center + self._tail_half_width
+        tail_tip_y = self.height() - 1
+
+        body_path = QPainterPath()
+        body_path.addRoundedRect(body_rect, 12, 12)
+
+        tail_path = QPainterPath()
+        tail_path.moveTo(tail_left, body_bottom)
+        tail_path.lineTo(tail_base_center, tail_tip_y)
+        tail_path.lineTo(tail_right, body_bottom)
+        tail_path.closeSubpath()
+
+        painter.drawPath(body_path.united(tail_path))
 
 
 class ControllerTaskBridge(QObject):
@@ -181,6 +211,8 @@ class AssistantApp(QWidget):
         self._pending_request: PendingControllerRequest | None = None
         self._request_counter = 0
         self.current_dialogue_category: Optional[str] = None
+        self._active_interactions: set[str] = set()
+        self._quit_after_dialogue = False
         self._active_voice_utterances: set[str] = set()
         self._last_voice_selection_note = ""
         self._pending_voice_requests: dict[str, SpeechRequest] = {}
@@ -217,14 +249,6 @@ class AssistantApp(QWidget):
         )
         self.voice_service = VoiceService(event_callback=self._voice_event_bridge.received.emit)
 
-        self.menu = QMenu(self)
-        self.menu.setStyleSheet(
-            "QMenu { background: #102226; color: #F1FAEE; border: 1px solid #1B263B; }"
-            "QMenu::item:selected { background: #F4A261; color: #111111; }"
-        )
-        self.menu.aboutToShow.connect(self._refresh_menu_state)
-        self._build_context_menu()
-
         self.wander_timer = QTimer(self)
         self.wander_timer.timeout.connect(self._wander_tick)
 
@@ -247,73 +271,6 @@ class AssistantApp(QWidget):
         self.wander_timer.start(70)
         self._arm_autonomy_timer()
         self.keep_on_top_timer.start(2400)
-
-    def _build_context_menu(self) -> None:
-        talk_action = QAction("Talk to Dipsy", self)
-        talk_action.triggered.connect(self._chat_prompt)
-        self.menu.addAction(talk_action)
-
-        joke_action = QAction("Tell a Joke", self)
-        joke_action.triggered.connect(self._tell_joke)
-        self.menu.addAction(joke_action)
-
-        do_something_action = QAction("Do Something", self)
-        do_something_action.triggered.connect(self._random_bit)
-        self.menu.addAction(do_something_action)
-
-        status_action = QAction("Show Status", self)
-        status_action.triggered.connect(self._show_status)
-        self.menu.addAction(status_action)
-
-        show_memory_action = QAction("Show Memory", self)
-        show_memory_action.triggered.connect(self._show_memory)
-        self.menu.addAction(show_memory_action)
-
-        forget_memory_action = QAction("Forget Memory", self)
-        forget_memory_action.triggered.connect(self._forget_memory)
-        self.menu.addAction(forget_memory_action)
-
-        reset_action = QAction("Reset Session", self)
-        reset_action.triggered.connect(self._reset_session)
-        self.menu.addAction(reset_action)
-
-        self.menu.addSeparator()
-
-        voice_menu = self.menu.addMenu("Voice")
-
-        self.voice_toggle_action = QAction(self)
-        self.voice_toggle_action.triggered.connect(self._toggle_voice_enabled)
-        voice_menu.addAction(self.voice_toggle_action)
-
-        voice_select_action = QAction("Select Retro Voice", self)
-        voice_select_action.triggered.connect(self._select_voice)
-        voice_menu.addAction(voice_select_action)
-
-        voice_rate_action = QAction("Set Voice Rate", self)
-        voice_rate_action.triggered.connect(self._set_voice_rate)
-        voice_menu.addAction(voice_rate_action)
-
-        voice_volume_action = QAction("Set Voice Volume", self)
-        voice_volume_action.triggered.connect(self._set_voice_volume)
-        voice_menu.addAction(voice_volume_action)
-
-        voice_pitch_action = QAction("Set Voice Pitch", self)
-        voice_pitch_action.triggered.connect(self._set_voice_pitch)
-        voice_menu.addAction(voice_pitch_action)
-
-        voice_preview_action = QAction("Preview Voice", self)
-        voice_preview_action.triggered.connect(self._preview_voice)
-        voice_menu.addAction(voice_preview_action)
-
-        self.menu.addSeparator()
-
-        roam_action = QAction("Roam Somewhere", self)
-        roam_action.triggered.connect(self._start_walk_action)
-        self.menu.addAction(roam_action)
-
-        quit_action = QAction("Quit", self)
-        quit_action.triggered.connect(self._quit)
-        self.menu.addAction(quit_action)
 
     def _screen_geometry(self):
         screen = self.screen() or QApplication.primaryScreen()
@@ -368,12 +325,6 @@ class AssistantApp(QWidget):
             return
         self.memory_store.delete_memory()
 
-    def _refresh_menu_state(self) -> None:
-        voice_status = "Disable Voice" if self.session.profile.voice.enabled else "Enable Voice"
-        if not self.voice_service.is_available():
-            voice_status += " (Unavailable)"
-        self.voice_toggle_action.setText(voice_status)
-
     def _toggle_voice_enabled(self) -> None:
         voice = self.session.profile.voice.bounded()
         self.session.profile.voice = voice.__class__(
@@ -391,8 +342,8 @@ class AssistantApp(QWidget):
     def _select_voice(self) -> None:
         voices = self.voice_service.list_voices()
         if not voices:
-            QMessageBox.information(
-                self,
+            self._show_message_with_interaction(
+                "information",
                 "Voice Selection",
                 self.voice_service.status_reason or "No Windows speech voices were found.",
             )
@@ -406,13 +357,11 @@ class AssistantApp(QWidget):
                 current_index = index
                 break
 
-        choice, accepted = QInputDialog.getItem(
-            self,
+        choice, accepted = self._get_item_with_interaction(
             "Select Retro Voice",
             "Pick a Windows voice. Automatic keeps the best retro match.",
             choices,
-            current_index,
-            False,
+            current=current_index,
         )
         if not accepted:
             return
@@ -435,8 +384,7 @@ class AssistantApp(QWidget):
 
     def _set_voice_rate(self) -> None:
         voice_settings = self.session.profile.voice.bounded()
-        rate, accepted = QInputDialog.getInt(
-            self,
+        rate, accepted = self._get_int_with_interaction(
             "Voice Rate",
             "Set retro speech rate (-10 to 10):",
             voice_settings.rate,
@@ -457,8 +405,7 @@ class AssistantApp(QWidget):
 
     def _set_voice_volume(self) -> None:
         voice_settings = self.session.profile.voice.bounded()
-        volume, accepted = QInputDialog.getInt(
-            self,
+        volume, accepted = self._get_int_with_interaction(
             "Voice Volume",
             "Set retro speech volume (0 to 100):",
             voice_settings.volume,
@@ -479,8 +426,7 @@ class AssistantApp(QWidget):
 
     def _set_voice_pitch(self) -> None:
         voice_settings = self.session.profile.voice.bounded()
-        pitch, accepted = QInputDialog.getInt(
-            self,
+        pitch, accepted = self._get_int_with_interaction(
             "Voice Pitch",
             "Set retro speech pitch (-10 to 10):",
             voice_settings.pitch,
@@ -571,7 +517,11 @@ class AssistantApp(QWidget):
     def _perform_controller_result(
         self, result: ControllerResult, schedule_idle: bool = False
     ) -> None:
-        self._perform_turn(result.turn, schedule_idle=schedule_idle)
+        self._perform_turn(
+            result.turn,
+            execution_results=self._execution_results_for_result(result),
+            schedule_idle=schedule_idle,
+        )
 
     def _debug_log(self, message: str) -> None:
         print(f"[Dipsy] {message}")
@@ -580,6 +530,85 @@ class AssistantApp(QWidget):
         if next_state is None:
             return
         self.session = next_state
+
+    def _begin_interaction(self, reason: str, *, user_driven: bool = False) -> None:
+        self._active_interactions.add(reason)
+        self.autonomy_timer.stop()
+        if user_driven:
+            self._note_user_interaction()
+
+    def _end_interaction(self, reason: str) -> None:
+        self._active_interactions.discard(reason)
+        if not self._active_interactions:
+            self._arm_autonomy_timer()
+
+    def _interaction_active(self) -> bool:
+        return bool(self._active_interactions)
+
+    def _assistant_output_active(self) -> bool:
+        return (
+            self.dialogue_presenter.active_item is not None
+            or self.bubble_window.isVisible()
+            or bool(self._active_voice_utterances)
+            or self.dialogue_reveal_timer.isActive()
+            or self.bubble_hide_timer.isActive()
+        )
+
+    def _get_text_with_interaction(self, title: str, label: str) -> tuple[str, bool]:
+        reason = f"dialog:text:{title}"
+        self._begin_interaction(reason, user_driven=True)
+        try:
+            return QInputDialog.getText(self, title, label)
+        finally:
+            self._end_interaction(reason)
+
+    def _get_item_with_interaction(
+        self,
+        title: str,
+        label: str,
+        items: list[str],
+        current: int = 0,
+    ) -> tuple[str, bool]:
+        reason = f"dialog:item:{title}"
+        self._begin_interaction(reason, user_driven=True)
+        try:
+            return QInputDialog.getItem(self, title, label, items, current, False)
+        finally:
+            self._end_interaction(reason)
+
+    def _get_int_with_interaction(
+        self,
+        title: str,
+        label: str,
+        value: int,
+        minimum: int,
+        maximum: int,
+    ) -> tuple[int, bool]:
+        reason = f"dialog:int:{title}"
+        self._begin_interaction(reason, user_driven=True)
+        try:
+            return QInputDialog.getInt(self, title, label, value, minimum, maximum)
+        finally:
+            self._end_interaction(reason)
+
+    def _show_message_with_interaction(
+        self,
+        level: str,
+        title: str,
+        text: str,
+        *,
+        parent: QWidget | None = None,
+        user_driven: bool = True,
+    ) -> None:
+        reason = f"dialog:message:{title}"
+        self._begin_interaction(reason, user_driven=user_driven)
+        try:
+            if level == "critical":
+                QMessageBox.critical(parent or self, title, text)
+                return
+            QMessageBox.information(parent or self, title, text)
+        finally:
+            self._end_interaction(reason)
 
     def _submit_controller_task(
         self,
@@ -598,6 +627,7 @@ class AssistantApp(QWidget):
             on_result=on_result,
             progress_mode=progress_mode,
         )
+        self._begin_interaction("controller_request")
         self._clear_dialogue_state(stop_voice=True)
         self._clear_animation_overlay()
         if progress_mode == PENDING_PROGRESS_LLM_WAIT:
@@ -630,13 +660,20 @@ class AssistantApp(QWidget):
             return
 
         self._pending_request = None
+        self._end_interaction("controller_request")
         self._clear_dialogue_state()
-        if pending_request.name.startswith("autonomous") and result.session_state is not None:
+        if pending_request.name == "inactive tick" and result.session_state is not None:
             behavior = result.turn.behavior or result.session_state.last_autonomous_behavior
             result.session_state.record_autonomous_timing(behavior, self._now_ms())
         self._apply_session_state(result.session_state)
         self._debug_log(
-            f"completed: {pending_request.name} -> say={bool(result.turn.say)} action={getattr(result.turn.action, 'action_id', None)} animation={result.turn.animation}"
+            "completed: "
+            f"{pending_request.name} -> "
+            f"say={bool(result.turn.say)} "
+            f"action={getattr(result.turn.action, 'action_id', None)} "
+            f"animation={result.turn.animation} "
+            f"loop_steps={len(result.loop_steps)} "
+            f"loop_stop={result.loop_stop_reason}"
         )
 
         pending_request.on_result(result)
@@ -649,6 +686,7 @@ class AssistantApp(QWidget):
             self._pending_request.name if self._pending_request is not None else "request"
         )
         self._pending_request = None
+        self._end_interaction("controller_request")
         self._clear_dialogue_state(stop_voice=True)
         if request_name.startswith("onboarding"):
             self.onboarding_active = False
@@ -656,10 +694,11 @@ class AssistantApp(QWidget):
         self._clear_animation_overlay()
         self._sync_presentation_to_motion()
         self._arm_autonomy_timer()
-        QMessageBox.critical(
-            self,
+        self._show_message_with_interaction(
+            "critical",
             "Dipsy Dolphin",
             f"The local brain failed during {request_name}.\n\n{message}",
+            user_driven=False,
         )
 
     def _show_busy_note(self) -> None:
@@ -670,13 +709,38 @@ class AssistantApp(QWidget):
             hold_ms=2600,
         )
 
-    def _perform_turn(self, turn: AssistantTurn, schedule_idle: bool = False) -> None:
+    def _perform_turn(
+        self,
+        turn: AssistantTurn,
+        *,
+        execution_results=(),
+        schedule_idle: bool = False,
+    ) -> None:
         cue = resolve_turn_presentation(turn, emotion=self.session.emotion)
+        execution_results = tuple(result for result in execution_results if result is not None)
+        last_execution_result = execution_results[-1] if execution_results else None
+        directive_kinds = [
+            result.directive.kind
+            for result in execution_results
+            if result.directive is not None and result.status == "success"
+        ]
         self._debug_log(
-            f"apply turn: say={turn.say!r} animation={turn.animation} action={getattr(turn.action, 'action_id', None)} cooldown={turn.cooldown_ms}"
+            "apply turn: "
+            f"say={turn.say!r} "
+            f"animation={turn.animation} "
+            f"action={getattr(turn.action, 'action_id', None)} "
+            f"execution_status={getattr(last_execution_result, 'status', None)} "
+            f"directives={directive_kinds or [None]} "
+            f"cooldown={turn.cooldown_ms}"
         )
-        if turn.action and turn.action.action_id == "roam_somewhere":
-            self._start_walk_action()
+        for execution_result in execution_results:
+            apply_execution_result(
+                execution_result,
+                start_walk=self._start_walk_action,
+                request_quit=lambda say=bool(turn.say): self._request_quit_from_execution(
+                    defer=say
+                ),
+            )
 
         if turn.say:
             self._speak(turn.say, cue=cue)
@@ -687,6 +751,18 @@ class AssistantApp(QWidget):
 
         if schedule_idle:
             self._arm_autonomy_timer()
+
+    def _execution_results_for_result(self, result: ControllerResult):
+        loop_execution_results = tuple(
+            step.execution_result
+            for step in result.loop_steps
+            if step.execution_result is not None
+        )
+        if loop_execution_results:
+            return loop_execution_results
+        if result.execution_result is not None:
+            return (result.execution_result,)
+        return ()
 
     def _on_voice_event(self, event: SpeechEvent) -> None:
         if event.event_type == "voice_selected":
@@ -700,11 +776,11 @@ class AssistantApp(QWidget):
 
         if event.event_type == "started":
             self._active_voice_utterances.add(event.utterance_id)
-            self._sync_voice_animation(event.utterance_id, duration_ms=700)
+            self._sync_voice_animation(event.utterance_id, pulse_kind="started")
             return
 
         if event.event_type == "word":
-            self._sync_voice_animation(event.utterance_id, duration_ms=420)
+            self._sync_voice_animation(event.utterance_id, pulse_kind="word")
             return
 
         if event.event_type in {"finished", "cancelled", "failed"}:
@@ -722,10 +798,15 @@ class AssistantApp(QWidget):
             ):
                 self.bubble_hide_timer.start(250)
 
-    def _sync_voice_animation(self, utterance_id: str, *, duration_ms: int) -> None:
+    def _sync_voice_animation(self, utterance_id: str, *, pulse_kind: str) -> None:
         active_item = self.dialogue_presenter.active_item
         if active_item is None or active_item.utterance_id != utterance_id:
             return
+        duration_ms = estimate_retro_talk_pulse_ms(
+            category=active_item.cue.dialogue_category,
+            settings=self.session.profile.voice,
+            pulse_kind=pulse_kind,
+        )
         self._request_animation("talk", duration_ms=duration_ms, force=True)
 
     def _ensure_active_voice(self) -> None:
@@ -762,7 +843,7 @@ class AssistantApp(QWidget):
 
     def _handle_onboarding_name_prompt(self, result: ControllerResult) -> None:
         self._perform_controller_result(result)
-        user_name, accepted = QInputDialog.getText(self, "Dipsy Dolphin", result.turn.say)
+        user_name, accepted = self._get_text_with_interaction("Dipsy Dolphin", result.turn.say)
         if accepted and user_name:
             self.session.user_name = user_name.strip() or "friend"
 
@@ -776,7 +857,7 @@ class AssistantApp(QWidget):
 
     def _handle_onboarding_interest_prompt(self, result: ControllerResult) -> None:
         self._perform_controller_result(result)
-        interests_text, accepted = QInputDialog.getText(self, "Dipsy Dolphin", result.turn.say)
+        interests_text, accepted = self._get_text_with_interaction("Dipsy Dolphin", result.turn.say)
         if accepted and interests_text:
             parsed = self.controller.parse_interests(interests_text)
             if parsed:
@@ -800,7 +881,9 @@ class AssistantApp(QWidget):
             self._show_busy_note()
             return
 
-        user_text, accepted = QInputDialog.getText(self, "Talk to Dipsy Dolphin", "Say something:")
+        user_text, accepted = self._get_text_with_interaction(
+            "Talk to Dipsy Dolphin", "Say something:"
+        )
         if not accepted or not user_text:
             self._sync_presentation_to_motion()
             return
@@ -839,7 +922,9 @@ class AssistantApp(QWidget):
         self._note_user_interaction()
         submitted = self._submit_controller_task(
             "joke",
-            lambda session=copy.deepcopy(self.session): self.controller.joke_turn(session),
+            lambda session=copy.deepcopy(self.session): self.controller.handle_user_message(
+                "Tell me a joke.", session
+            ),
             lambda result: self._perform_controller_result(result, schedule_idle=True),
         )
         if not submitted:
@@ -849,7 +934,9 @@ class AssistantApp(QWidget):
         self._note_user_interaction()
         submitted = self._submit_controller_task(
             "do something",
-            lambda session=copy.deepcopy(self.session): self.controller.do_something_turn(session),
+            lambda session=copy.deepcopy(self.session): self.controller.handle_user_message(
+                "Do something playful and visible.", session
+            ),
             lambda result: self._perform_controller_result(result, schedule_idle=True),
         )
         if not submitted:
@@ -859,7 +946,9 @@ class AssistantApp(QWidget):
         self._note_user_interaction()
         submitted = self._submit_controller_task(
             "status",
-            lambda session=copy.deepcopy(self.session): self.controller.status_turn(session),
+            lambda session=copy.deepcopy(self.session): self.controller.handle_user_message(
+                "What's our current status?", session
+            ),
             lambda result: self._perform_controller_result(result, schedule_idle=True),
         )
         if not submitted:
@@ -868,8 +957,10 @@ class AssistantApp(QWidget):
     def _show_memory(self) -> None:
         sections = self._memory_sections_for_display(self.session.memory)
         if not sections:
-            QMessageBox.information(
-                self, "Dipsy Memory", "Dipsy is not holding onto any saved memory yet."
+            self._show_message_with_interaction(
+                "information",
+                "Dipsy Memory",
+                "Dipsy is not holding onto any saved memory yet.",
             )
             return
 
@@ -878,16 +969,14 @@ class AssistantApp(QWidget):
             lines.append(f"{title}:")
             lines.extend(f"- {value}" for value in values)
             lines.append("")
-        QMessageBox.information(self, "Dipsy Memory", "\n".join(lines).strip())
+        self._show_message_with_interaction("information", "Dipsy Memory", "\n".join(lines).strip())
 
     def _forget_memory(self) -> None:
-        choice, accepted = QInputDialog.getItem(
-            self,
+        choice, accepted = self._get_item_with_interaction(
             "Forget Memory",
             "What should Dipsy forget?",
             ["All Memory", "Onboarding", "Long-Term Facts", "Preferences"],
-            0,
-            False,
+            current=0,
         )
         if not accepted:
             return
@@ -934,6 +1023,9 @@ class AssistantApp(QWidget):
     def _arm_autonomy_timer(self, delay_ms: Optional[int] = None) -> None:
         if self._closing:
             return
+        if self._interaction_active() or self._assistant_output_active():
+            self.autonomy_timer.stop()
+            return
         interval = delay_ms if delay_ms is not None else self._next_autonomy_delay_ms()
         self.autonomy_timer.start(max(1000, interval))
 
@@ -947,14 +1039,13 @@ class AssistantApp(QWidget):
         return (
             not self.session.onboarding_complete
             or self.onboarding_active
-            or self.dragging
-            or self.walk_active
-            or self.bubble_window.isVisible()
-            or self._pending_request is not None
+            or self._interaction_active()
+            or self._assistant_output_active()
         )
 
     def _note_user_interaction(self) -> None:
         self.session.mark_user_interaction(self._now_ms())
+        self._arm_autonomy_timer()
 
     def _wander_tick(self) -> None:
         if not self.walk_active or self.dragging:
@@ -988,18 +1079,17 @@ class AssistantApp(QWidget):
 
         now_ms = self._now_ms()
         decision = schedule_autonomy(self.session, now_ms)
-        if not decision.should_run or decision.plan is None:
+        if not decision.should_run:
             self._arm_autonomy_timer(decision.next_delay_ms)
             return
 
-        since_user = seconds_since_user_interaction(self.session, now_ms)
         submitted = self._submit_controller_task(
-            f"autonomous {decision.plan.mode}",
-            lambda session=copy.deepcopy(self.session), plan=decision.plan: (
-                self.controller.autonomous_turn(
+            "inactive tick",
+            lambda session=copy.deepcopy(self.session): (
+                self.controller.inactivity_turn(
                     session,
-                    plan=plan,
-                    seconds_since_user_interaction=since_user,
+                    seconds_since_user_interaction=decision.seconds_since_user_interaction,
+                    cooldown_remaining_ms=decision.cooldown_remaining_ms,
                 )
             ),
             lambda result: self._perform_controller_result(result, schedule_idle=True),
@@ -1113,8 +1203,20 @@ class AssistantApp(QWidget):
             self._show_active_dialogue()
             return
         self._clear_dialogue_state()
+        if self._quit_after_dialogue:
+            self._quit_after_dialogue = False
+            self._quit()
+            return
         self._clear_animation_overlay()
         self._sync_presentation_to_motion()
+        self._arm_autonomy_timer()
+
+    def _request_quit_from_execution(self, *, defer: bool) -> bool:
+        if defer:
+            self._quit_after_dialogue = True
+            return True
+        self._quit()
+        return True
 
     def _speak(
         self,
@@ -1125,16 +1227,27 @@ class AssistantApp(QWidget):
         if cue is None:
             raise ValueError("Presentation cue is required for speech")
         utterance_id = f"speech-{uuid4().hex}"
+        voice_settings = self.session.profile.voice.bounded()
+        estimated_voice_hold_ms = (
+            estimate_retro_speech_duration_ms(
+                text,
+                category=cue.dialogue_category,
+                settings=voice_settings,
+            )
+            if voice_settings.enabled and self.voice_service.is_available()
+            else 0
+        )
+        resolved_hold_ms = max(hold_ms or 0, estimated_voice_hold_ms) or None
         self._pending_voice_requests[utterance_id] = SpeechRequest(
             utterance_id=utterance_id,
             text=text,
             category=cue.dialogue_category,
-            settings=self.session.profile.voice.bounded(),
+            settings=voice_settings,
         )
         action = self.dialogue_presenter.enqueue(
             text,
             cue,
-            hold_override_ms=hold_ms,
+            hold_override_ms=resolved_hold_ms,
             utterance_id=utterance_id,
         )
         if action == "drop":
@@ -1158,25 +1271,24 @@ class AssistantApp(QWidget):
         anchor_x, anchor_y = self.character_widget.bubble_anchor()
         anchor_global_x = self.x() + anchor_x
         anchor_global_y = self.y() + anchor_y
+        character_center_global_x = self.x() + (self.width() // 2)
         screen_left = screen_geometry.x()
         screen_top = screen_geometry.y()
         screen_right = screen_left + screen_geometry.width()
         screen_bottom = screen_top + screen_geometry.height()
-
-        right_x = anchor_global_x + 12
-        left_x = anchor_global_x - bubble_width - 12
-        if right_x + bubble_width <= screen_right - 8:
-            bubble_x = right_x
-        else:
-            bubble_x = max(screen_left + 8, left_x)
-
-        bubble_y = anchor_global_y - 8
-        if bubble_y + bubble_height > screen_bottom - 8:
-            bubble_y = max(screen_top + 8, screen_bottom - bubble_height - 8)
-        else:
-            bubble_y = max(screen_top + 8, bubble_y)
-
-        self.bubble_window.move(bubble_x, bubble_y)
+        placement = compute_bubble_placement(
+            anchor_global_x=anchor_global_x,
+            anchor_global_y=anchor_global_y,
+            bubble_width=bubble_width,
+            bubble_height=bubble_height,
+            screen_left=screen_left,
+            screen_top=screen_top,
+            screen_right=screen_right,
+            screen_bottom=screen_bottom,
+            preferred_center_global_x=character_center_global_x,
+        )
+        self.bubble_window.set_tail_tip_x(placement.tail_tip_x)
+        self.bubble_window.move(placement.bubble_x, placement.bubble_y)
 
     def _quit(self) -> None:
         self._closing = True
@@ -1208,11 +1320,7 @@ class AssistantApp(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self.dragging = True
             self.drag_offset = event.globalPosition().toPoint() - self.pos()
-            event.accept()
-            return
-
-        if event.button() == Qt.MouseButton.RightButton:
-            self.menu.exec(event.globalPosition().toPoint())
+            self._begin_interaction("drag", user_driven=True)
             event.accept()
             return
 
@@ -1220,6 +1328,7 @@ class AssistantApp(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self.dragging:
+            self._note_user_interaction()
             current_x = self.x()
             next_position = event.globalPosition().toPoint() - self.drag_offset
             delta_x = next_position.x() - current_x
@@ -1238,6 +1347,8 @@ class AssistantApp(QWidget):
             self.walk_active = False
             self.walk_target_x = self.x()
             self.walk_target_y = self.y()
+            self._note_user_interaction()
+            self._end_interaction("drag")
             self._sync_presentation_to_motion()
             event.accept()
             return

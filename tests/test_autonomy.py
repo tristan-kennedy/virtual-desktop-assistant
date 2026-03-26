@@ -1,7 +1,4 @@
-import random
-
-from dipsy_dolphin.core.autonomy import choose_autonomy_plan, schedule_autonomy
-from dipsy_dolphin.core.emotion import EmotionState
+from dipsy_dolphin.core.autonomy import schedule_autonomy
 from dipsy_dolphin.core.models import SessionState, UserProfile
 
 
@@ -15,25 +12,23 @@ def test_schedule_autonomy_waits_after_recent_user_interaction() -> None:
 
     assert decision.should_run is False
     assert decision.next_delay_ms == 7_000
+    assert decision.reason == "cooldown"
+    assert decision.seconds_since_user_interaction == 5
+    assert decision.cooldown_remaining_ms == 7_000
 
 
-def test_schedule_autonomy_uses_per_behavior_cooldowns() -> None:
+def test_schedule_autonomy_respects_global_autonomy_cooldown() -> None:
     state = SessionState(
         profile=UserProfile(user_name="Taylor", has_met_user=True),
-        autonomous_behavior_times_ms={
-            "idle": 120_000,
-            "emote": 120_000,
-            "quip": 120_000,
-            "roam": 120_000,
-            "question": 120_000,
-            "joke": 120_000,
-        },
+        last_autonomous_at_ms=120_000,
+        autonomy_cooldown_ms=18_000,
     )
 
     decision = schedule_autonomy(state, 125_000)
 
     assert decision.should_run is False
-    assert decision.next_delay_ms == 5_000
+    assert decision.next_delay_ms == 13_000
+    assert decision.cooldown_remaining_ms == 13_000
 
 
 def test_schedule_autonomy_respects_pace_preference() -> None:
@@ -58,50 +53,30 @@ def test_schedule_autonomy_can_run_when_state_is_ready() -> None:
     decision = schedule_autonomy(state, 120_000)
 
     assert decision.should_run is True
-    assert decision.plan is not None
+    assert decision.reason == "ready"
+    assert decision.cooldown_remaining_ms == 0
 
 
-def test_high_boredom_biases_roam_more_often_than_baseline() -> None:
-    baseline_state = SessionState(profile=UserProfile(user_name="Taylor", has_met_user=True))
-    bored_state = SessionState(
-        profile=UserProfile(user_name="Taylor", has_met_user=True),
-        emotion=EmotionState(boredom=82, energy=78, excitement=40),
+def test_schedule_autonomy_waits_during_onboarding() -> None:
+    state = SessionState(
+        profile=UserProfile(),
+        onboarding_complete=False,
     )
 
-    baseline_rng = random.Random(7)
-    bored_rng = random.Random(7)
-    baseline_roams = sum(
-        choose_autonomy_plan(baseline_state, 120_000, rng=baseline_rng).mode == "roam"
-        for _ in range(250)
-    )
-    bored_roams = sum(
-        choose_autonomy_plan(bored_state, 120_000, rng=bored_rng).mode == "roam" for _ in range(250)
-    )
+    decision = schedule_autonomy(state, 120_000)
 
-    assert bored_roams > baseline_roams
+    assert decision.should_run is False
+    assert decision.reason == "onboarding_incomplete"
+    assert decision.next_delay_ms == 1_500
 
 
-def test_low_energy_biases_quiet_modes_more_often_than_high_energy() -> None:
-    low_energy_state = SessionState(
-        profile=UserProfile(user_name="Taylor", has_met_user=True),
-        emotion=EmotionState(energy=18, boredom=30, confidence=50),
-    )
-    high_energy_state = SessionState(
-        profile=UserProfile(user_name="Taylor", has_met_user=True),
-        emotion=EmotionState(energy=82, boredom=30, confidence=50),
+def test_schedule_autonomy_respects_disabled_setting() -> None:
+    state = SessionState(
+        profile=UserProfile(user_name="Taylor", has_met_user=True, autonomy_enabled=False)
     )
 
-    low_energy_rng = random.Random(11)
-    high_energy_rng = random.Random(11)
-    low_energy_quiet = sum(
-        choose_autonomy_plan(low_energy_state, 120_000, rng=low_energy_rng).mode
-        in {"idle", "emote"}
-        for _ in range(250)
-    )
-    high_energy_quiet = sum(
-        choose_autonomy_plan(high_energy_state, 120_000, rng=high_energy_rng).mode
-        in {"idle", "emote"}
-        for _ in range(250)
-    )
+    decision = schedule_autonomy(state, 120_000)
 
-    assert low_energy_quiet > high_energy_quiet
+    assert decision.should_run is False
+    assert decision.reason == "autonomy_disabled"
+    assert decision.next_delay_ms == 30_000

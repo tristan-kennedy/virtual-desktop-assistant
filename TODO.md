@@ -2,22 +2,22 @@
 
 Roadmap for Dipsy Dolphin.
 
-Use this file as the default implementation order unless the user gives a different priority. Work from top to bottom, keep changes visible and clear, and preserve the separation between prompting, execution, and presentation as computer actions arrive.
+Use this file as the default implementation order unless the user gives a different priority. Work from top to bottom, keep changes visible and clear, and preserve the separation between chat-first control, internal execution, and presentation.
 
 ## Current snapshot
 
-- The runtime is now LLM-first.
-- The core dialogue path lives in `dipsy_dolphin/core/controller.py` and `dipsy_dolphin/llm/`.
-- Structured model output and an initial action registry are in place.
-- The PySide6 shell, presentation controller, and animation state machine are in place.
-- The next major gaps are emotion, scheduling, richer dialogue presentation, memory growth, and a fuller function execution interface.
+- The runtime is now LLM-first and chat-first.
+- Emotion, inactivity scheduling, richer dialogue presentation, structured memory, and TTS are in place.
+- Structured action execution and a bounded controller loop are in place.
+- The shell is now character plus conversation, without menu-driven controls.
+- The next major gaps are first real assistant capabilities through chat, more theatrical routines, stronger visual polish, push-to-talk or STT, persistence hardening, and developer observability.
 
 ## Phase map
 
 - Phase 1: foundations and architecture (`1-5`)
 - Phase 2: character behavior and presentation depth (`6-11`)
-- Phase 3: LLM/runtime contracts and function interface growth (`12-18`)
-- Phase 4: theatrical polish and longer-term expansion (`19-29`)
+- Phase 3: LLM/runtime contracts and first assistant capabilities (`12-17`)
+- Phase 4: theatrical polish and longer-term expansion (`18-26`)
 
 ## Roadmap
 
@@ -54,12 +54,13 @@ Use this file as the default implementation order unless the user gives a differ
 - Done when: Dipsy visibly changes animation state based on what it is doing.
 - Status: completed in `dipsy_dolphin/ui/animation_state_machine.py`.
 
-6. Add an emotion model
+6. Add an emotion model [done]
 
 - Track mood, energy, excitement, confidence, boredom, and familiarity with the user.
 - Use emotion state to drive line choice, animation choice, and idle behavior frequency.
 - Keep the model simple and inspectable.
 - Done when: identical input can produce different visible behavior based on Dipsy's current emotional state.
+- Status: completed through `dipsy_dolphin/core/emotion.py`, controller state updates, prompt wiring, and emotion-focused tests.
 
 7. Link animation to emotion and intent [done]
 
@@ -68,34 +69,35 @@ Use this file as the default implementation order unless the user gives a differ
 - Done when: a user can infer Dipsy's mood from visuals even with the text hidden.
 - Status: completed through `dipsy_dolphin/core/dialogue.py`, `dipsy_dolphin/ui/presentation_policy.py`, `dipsy_dolphin/ui/presentation_controller.py`, and the updated `dipsy_dolphin/ui/app.py` flow.
 
-8. Replace simple idle timing with a behavior scheduler [done]
+8. Replace simple idle timing with neutral inactivity scheduling [done]
 
-- Introduce a scheduler that considers time since last interaction, emotion, cooldowns, and user preferences.
-- Separate ambient chatter, questions, jokes, reactions, and movement into distinct behavior types.
-- Done when: autonomous behavior is state-driven instead of mostly timer-driven.
-- Status: completed through `dipsy_dolphin/core/autonomy.py`, `dipsy_dolphin/core/models.py`, `dipsy_dolphin/storage/profile_store.py`, and the scheduler-driven timer flow in `dipsy_dolphin/ui/app.py`.
+- Introduce scheduling that considers time since user interaction, emotion, cooldowns, and current activity.
+- Trigger neutral inactivity turns and let the LLM decide whether to stay silent, speak, emote, or act.
+- Done when: autonomous behavior is state-driven, pauses during active interaction, and no longer relies on preselected behavior modes.
+- Status: completed through `dipsy_dolphin/core/autonomy.py`, `dipsy_dolphin/core/models.py`, `dipsy_dolphin/storage/profile_store.py`, and the inactivity-driven timer flow in `dipsy_dolphin/ui/app.py`.
 
 9. Upgrade the speech bubble and dialogue presentation [done]
 
-- Add clearer line categories, staged reveal, queueing rules, and interruption handling.
+- Add clearer line categories, staged reveal, queueing rules, interruption handling, and stronger bubble presentation.
 - Support different bubble styles for jokes, warnings, thoughts, and normal speech.
-- Keep the bubble synchronized with animation and future voice playback.
+- Keep the bubble synchronized with animation and voice playback.
 - Done when: dialogue presentation has enough structure to support richer emotional delivery and voice.
-- Status: completed through `dipsy_dolphin/ui/dialogue_presenter.py`, `dipsy_dolphin/ui/presentation_policy.py`, and the queued staged-reveal bubble flow in `dipsy_dolphin/ui/app.py`.
+- Status: completed through `dipsy_dolphin/ui/dialogue_presenter.py`, `dipsy_dolphin/ui/presentation_policy.py`, `dipsy_dolphin/ui/bubble_layout.py`, and the staged-reveal bubble flow in `dipsy_dolphin/ui/app.py`.
 
 10. Expand memory beyond name and interests [done]
 
-- Split memory into profile, session, long-term facts, preferences, execution history, and tool context.
-- Make memory inspectable and deletable by the user.
+- Split memory into structured identity, long-term facts, preferences, and runtime context.
+- Keep LLM-authored memory updates explicit and controller-applied.
 - Done when: Dipsy can remember multiple categories of user information across sessions.
-- Status: completed through `dipsy_dolphin/core/memory.py`, `dipsy_dolphin/storage/memory_store.py`, the `memory_updates` turn contract, prompt wiring, and the new memory menu actions in `dipsy_dolphin/ui/app.py`.
+- Status: completed through `dipsy_dolphin/core/memory.py`, `dipsy_dolphin/storage/memory_store.py`, the `memory_updates` turn contract, and prompt/controller wiring.
 
-11. Add TTS voice output
+11. Add TTS voice output [done]
 
-- Add a robotic voice pipeline with mute, volume, rate, and interruption controls.
+- Add a retro voice pipeline with mute, interruption, and playback timing controls.
 - Sync spoken output with the speech bubble and animation state.
 - Keep voice optional so the app still works without audio.
-- Done when: Dipsy can speak lines aloud with stable playback controls.
+- Done when: Dipsy can speak lines aloud with consistent timing and stable interruption behavior.
+- Status: completed through `dipsy_dolphin/voice/`, `dipsy_dolphin/ui/dialogue_presenter.py`, and the voice-backed dialogue flow in `dipsy_dolphin/ui/app.py`.
 
 12. Add an LLM provider layer [done]
 
@@ -113,121 +115,105 @@ Use this file as the default implementation order unless the user gives a differ
 - Done when: every action request passes through a structured internal format first.
 - Status: completed through `dipsy_dolphin/core/controller_models.py` and `dipsy_dolphin/llm/response_parser.py`.
 
-14. Build an action and tool registry [done]
+14. Build an action registry [done]
 
-- Define a registry of runtime actions or callable tools with id, description, and parameter shape.
-- Keep the registry human-readable for review and AI-readable for planning.
+- Define a registry of runtime actions or callable capabilities with id, description, and parameter shape.
+- Keep the registry human-readable for development and AI-readable for planning.
 - Done when: Dipsy has a single source of truth for what it can currently invoke.
-- Status: completed as an initial bootstrap registry in `dipsy_dolphin/actions/registry.py`.
+- Status: completed as the current bootstrap registry in `dipsy_dolphin/actions/registry.py`.
 
-15. Add a fuller function execution layer
+15. Add a fuller execution layer [done]
 
-- Define attached function interfaces, argument validation, execution results, and error surfaces.
-- Keep function execution separate from UI rendering and prompt assembly.
+- Define explicit execution interfaces, argument validation, execution results, and error surfaces.
+- Keep execution separate from UI rendering and prompt assembly.
 - Support both simple one-shot calls and richer future controller loops.
-- Done when: the controller can invoke explicit functions without leaking execution details into the UI host.
+- Done when: the controller can invoke explicit actions without leaking execution details into the UI host.
+- Status: completed through `dipsy_dolphin/actions/executor.py`, `dipsy_dolphin/actions/models.py`, `dipsy_dolphin/ui/execution.py`, and the controller execution-result flow.
 
-16. Add a richer controller execution loop
+16. Add a richer controller execution loop [done]
 
-- Let the model plan, call a function, observe the result, and continue when needed.
+- Let the model plan, call an action, observe the result, and continue when needed.
 - Keep the loop deterministic enough to debug and inspect.
 - Make intermediate execution state visible to the runtime.
-- Done when: Dipsy can handle multi-step tool-backed interactions without collapsing everything into one prompt.
+- Done when: Dipsy can handle multi-step capability-backed interactions without collapsing everything into one prompt.
+- Status: completed through the bounded loop in `dipsy_dolphin/core/controller.py`, `ControllerLoopStep`, and the `action_result` follow-up prompt contract.
 
-17. Add user-facing approval, interruption, and review UX
-
-- Show what Dipsy is about to do when the execution path needs user review.
-- Support interrupting, retrying, or declining a proposed tool call.
-- Keep the UI understandable even when the controller loop gets more capable.
-- Done when: the user can follow and steer function-backed execution from the UI.
-
-18. Add execution logs and tool history
-
-- Record proposed tool calls, executed calls, results, failures, and follow-up turns.
-- Make the history inspectable from the UI and useful in future prompts.
-- Done when: tool-backed behavior can be reviewed and debugged without guesswork.
-
-19. Add app-specific integrations before generic automation
+17. Add first real assistant capabilities through chat
 
 - Build targeted adapters for things like Spotify, browser search, reminders, notes, and other explicit app surfaces.
+- Invoke them through conversation and structured runtime actions rather than separate UI controls.
 - Prefer explicit APIs or predictable command paths over fragile UI automation where practical.
-- Done when: Dipsy can control a few apps in a robust, reviewable way.
+- Done when: Dipsy can complete a few useful desktop tasks through chat in a robust, debuggable way.
 
-20. Add theatrical scene behaviors
+18. Add theatrical scene behaviors
 
 - Create entrance bits, celebration bits, fake panic, joke routines, and idea moments.
 - Tie them to animation, bubble styles, and future voice effects.
 - Done when: Dipsy has recognizable performative routines beyond basic responses.
 
-21. Improve visuals in passes
+19. Improve visuals in passes
 
 - Pass 1: stronger silhouette, color, facial readability, and bubble polish.
 - Pass 2: layered effects, better motion, better staging, and more expressive reactions.
 - Pass 3: richer sprite structure and stronger pseudo-3D feel if desired.
 - Done when: the character looks intentional and memorable instead of prototype-grade.
 
-22. Plan and execute the 3D milestone
+20. Plan and execute the 3D milestone
 
 - If true 3D remains the goal, define the renderer, asset format, rigging path, and animation import workflow.
 - Build a minimum 3D slice before any full migration.
 - Done when: a small but real 3D Dipsy path exists and is technically proven.
 
-23. Add a settings and control center
-
-- Add settings for voice, autonomy frequency, model provider, execution behavior, and memory controls.
-- Add pause and snooze controls so the user can quiet Dipsy without closing it.
-- Done when: the user can manage Dipsy's behavior without editing files manually.
-
-24. Add STT or push-to-talk voice input
+21. Add STT or push-to-talk voice input
 
 - Add push-to-talk first instead of always-listening input.
 - Show clear listening and transcript states before any action is taken.
 - Done when: the user can talk to Dipsy naturally without losing control over what gets executed.
 
-25. Harden persistence and migrations
+22. Harden persistence and migrations
 
-- Version storage formats for profiles, memory, settings, execution state, and tool history.
+- Version storage formats for profiles, memory, preferences, and any durable execution state that proves necessary.
 - Add migration logic for future schema changes.
 - Protect against partial writes and corrupted state where practical.
 - Done when: updates can add features without breaking existing user data.
 
-26. Add observability and debug tooling
+23. Add observability and debug tooling
 
-- Add logs for behavior selection, emotion changes, model usage, tool calls, failures, and recoveries.
-- Add a lightweight debug view or developer mode.
+- Add logs for autonomy triggers, emotion changes, model usage, action execution, failures, and recoveries.
+- Add a lightweight developer view or debug mode.
 - Done when: odd behavior can be traced without guesswork.
 
-27. Keep expanding automated tests with the runtime
+24. Keep expanding automated tests with the runtime
 
-- Add coverage for emotion transitions, scheduling, storage, tool execution, controller loops, and structured LLM output.
+- Add coverage for emotion transitions, scheduling, storage, execution, controller loops, and structured LLM output.
 - Focus first on non-UI logic.
 - Done when: the important assistant logic can change safely without regressions.
 
-28. Polish packaging and releases
+25. Polish packaging and releases
 
 - Add app icon, installer branding, version metadata, and better release notes.
 - Add smoke checks before automated releases.
 - Prepare for code signing once public distribution matters.
 - Done when: the release experience feels like a normal Windows desktop product.
 
-29. Roll out richer computer actions in stages
+26. Roll out richer computer actions in stages
 
 - Stage 1: chatty desktop companion.
-- Stage 2: memory, voice, emotion, and richer behavior.
-- Stage 3: attached single-step functions.
-- Stage 4: app integrations and result-aware controller loops.
-- Stage 5: richer multi-step execution.
+- Stage 2: memory, voice, emotion, and richer presence.
+- Stage 3: structured single-step capabilities behind chat.
+- Stage 4: app integrations and conversation-driven assistant behaviors.
+- Stage 5: broader multi-step capabilities if they still improve the assistant feel.
 - Done when: Dipsy's capabilities expand without blurring the boundaries between prompt, execution, and presentation.
 
 ## Immediate next sequence
 
 If work resumes soon, the recommended next build order is:
 
-1. `6` emotion model
-2. `7` animation-to-emotion and intent mapping
-3. `8` behavior scheduler
-4. `9` richer speech bubble and dialogue presentation
-5. `10` memory expansion
-6. `11` TTS voice output
-7. `15-18` function execution layer, controller loop, and review surfaces
-8. `19` first explicit integrations
+1. `17` first real assistant capabilities through chat
+2. `18` theatrical scene behaviors
+3. `19` visual improvement passes
+4. `21` push-to-talk or STT
+5. `22` persistence hardening
+6. `23` developer observability and debug tooling
+7. `24` test expansion
+8. `25` packaging and release polish

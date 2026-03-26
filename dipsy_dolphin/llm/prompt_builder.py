@@ -22,7 +22,7 @@ ALLOWED_ANIMATIONS = (
 def build_system_prompt() -> str:
     emotion_example = EmotionState().to_prompt_payload()
     contract = {
-        "say": "string; required for startup, onboarding, chat, joke, status, reset; optional for autonomous idle beats",
+        "say": "string; required for startup, onboarding, chat, joke, status, reset; optional for inactivity ticks",
         "dialogue_category": list(DIALOGUE_CATEGORIES),
         "animation": "optional visible hint; use one of " + ", ".join(ALLOWED_ANIMATIONS),
         "action": {"action_id": list(allowed_action_names()), "args": {}},
@@ -36,7 +36,7 @@ def build_system_prompt() -> str:
         "emotion": {
             axis: "integer 0-100; updated feeling after this turn" for axis in emotion_example
         },
-        "cooldown_ms": "integer 4000-30000",
+        "cooldown_ms": "integer 4000-120000",
         "behavior": [
             "idle",
             "emote",
@@ -76,47 +76,47 @@ def build_system_prompt() -> str:
             },
         },
         {
-            "event": "autonomous",
-            "shape": "usually idle; sometimes one brief beat",
+            "event": "chat",
+            "shape": "clear closing intent may reply briefly and quit",
+            "output": {
+                "say": "<one short goodbye line>",
+                "dialogue_category": "normal",
+                "animation": "talk",
+                "action": {"action_id": "quit_app", "args": {}},
+                "memory_updates": [],
+                "emotion": emotion_example,
+                "cooldown_ms": 4000,
+                "behavior": "action",
+                "topic": "goodbye",
+            },
+        },
+        {
+            "event": "inactive_tick",
+            "shape": "brief optional response after user inactivity",
             "output": {
                 "say": "",
                 "dialogue_category": "thought",
                 "animation": "idle",
-                "action": {"action_id": "idle", "args": {}},
-                "memory_updates": [],
-                "emotion": emotion_example,
-                "cooldown_ms": 15000,
-                "behavior": "idle",
-                "topic": "idle",
-            },
-        },
-        {
-            "event": "joke",
-            "shape": "one original short joke",
-            "output": {
-                "say": "<one original joke>",
-                "dialogue_category": "joke",
-                "animation": "laugh",
                 "action": None,
                 "memory_updates": [],
                 "emotion": emotion_example,
-                "cooldown_ms": 12000,
-                "behavior": "joke",
-                "topic": "joke",
+                "cooldown_ms": 25000,
+                "behavior": "idle",
+                "topic": "inactivity",
             },
         },
         {
-            "event": "do_something",
-            "shape": "brief setup line plus action",
+            "event": "action_result",
+            "shape": "brief follow-up after a function already ran; may request one next action if still needed",
             "output": {
-                "say": "<brief setup line>",
+                "say": "<short follow-up that reacts to the real function result>",
                 "dialogue_category": "normal",
-                "animation": "excited",
+                "animation": "talk",
                 "action": {"action_id": "roam_somewhere", "args": {}},
                 "memory_updates": [],
                 "emotion": emotion_example,
                 "cooldown_ms": 12000,
-                "behavior": "roam",
+                "behavior": "action",
                 "topic": "action",
             },
         },
@@ -136,9 +136,18 @@ def build_system_prompt() -> str:
             "Always return a complete emotion object that reflects how Dipsy feels after this turn. Keep changes gradual unless something notable happened.",
             "Always return exactly one dialogue_category. Use animation only when a stronger visible cue helps.",
             "The think animation is reserved for the UI while waiting on the local model. Never return think yourself.",
+            "Chat is the main way the user should ask for jokes, movement, status, and other supported routines.",
+            "App-level actions also happen through chat. If the user clearly asks Dipsy to leave, close, quit, or go away now, you may use quit_app.",
+            "Do not use quit_app for casual sign-offs unless the user is clearly asking to close Dipsy itself.",
+            "Inactivity ticks are neutral opportunities after quiet time, not pre-scripted behavior requests.",
+            "During inactivity, prioritize variety across beats instead of repeating one pattern.",
+            "Do not default to leading questions about interests or repeatedly probe the user for more facts during inactivity.",
+            "Use recent_autonomous_behaviors, recent_turns, and the current emotion state to vary between silence, quips, jokes, visible emotes, and allowed actions when appropriate.",
+            "Longer quiet stretches are good. After a noticeable beat, you may return a much longer cooldown_ms to let the desktop stay calm.",
+            "If a user asks for something that matches an allowed action, decide yourself whether to answer directly, use an action, or do both.",
             "On direct user chat only, you may return memory_updates when the user reveals something worth remembering or correcting later.",
             "Memory updates should be short concept summaries, not quotes. Use [] when nothing new should be remembered.",
-            "Do not write memory_updates for autonomous, joke, status, reset, or other non-chat events unless the event explicitly includes user-provided facts.",
+            "Do not write memory_updates for inactivity ticks, joke, status, reset, or other non-chat events unless the event explicitly includes user-provided facts.",
             f"Allowed action ids: {', '.join(allowed_action_names())}.",
             f"Response contract: {json.dumps(contract, ensure_ascii=True)}",
             f"Response shape hints: {json.dumps(response_shapes, ensure_ascii=True)}",
@@ -232,25 +241,21 @@ def _event_instructions(event: str, context: dict[str, Any] | None = None) -> st
         return "Summarize what Dipsy knows and how the session feels. Reflect the current emotion state clearly but concisely."
     if event == "reset":
         return "Acknowledge the reset with visible drama but safe tone."
-    if event == "autonomous":
-        autonomy_plan = context.get("autonomy_plan", {}) if isinstance(context, dict) else {}
-        if isinstance(autonomy_plan, dict) and autonomy_plan:
-            allowed_behaviors = autonomy_plan.get("allowed_behaviors", [])
-            guidance = str(autonomy_plan.get("guidance", "")).strip()
-            mode = str(autonomy_plan.get("mode", "idle")).strip() or "idle"
-            return (
-                "This is an autonomous desktop moment. Keep Dipsy alive but not annoying. "
-                f"Preferred mode for this turn: {mode}. "
-                f"Allowed behaviors for this turn: {', '.join(str(item) for item in allowed_behaviors)}. "
-                f"Guidance: {guidance} "
-                "Let Dipsy's current emotion influence whether the beat feels quiet, restless, bold, or warm. "
-                "If you speak, keep it brief. If you stay silent, return a visible animation or action that still feels intentional. "
-                "Do not use the think animation; the UI owns that while waiting for model output. "
-                "Do not turn every autonomous beat into speech."
-            )
+    if event == "inactive_tick":
+        seconds_since_user = ""
+        cooldown_remaining = ""
+        if isinstance(context, dict):
+            seconds_since_user = str(context.get("seconds_since_user_interaction", "")).strip()
+            cooldown_remaining = str(context.get("cooldown_remaining_ms", "")).strip()
         return (
-            "Choose one bounded next behavior. Most of the time return an idle beat with empty say. "
-            "Sometimes roam. Sometimes say one short companion line. Never ramble."
+            "The user has been inactive for a while. Decide whether to stay silent, speak briefly, or use one allowed action. "
+            f"Seconds since user interaction: {seconds_since_user or 'unknown'}. "
+            f"Current inactivity cooldown remaining before this tick fired: {cooldown_remaining or '0'} ms. "
+            "Prioritize diversity across beats and avoid repeatedly steering back to the user's interests unless there is a strong reason in the recent context. "
+            "It is often better to stay silent, give a tiny quip, tell a small joke, or do a visible action than to ask another leading question. "
+            "Longer cooldowns are fine after a bigger beat. "
+            "Keep the beat bounded and visible if you choose to do something. "
+            "Do not use the think animation; the UI owns that while waiting for model output."
         )
     if event == "joke":
         return "Deliver one original short joke in Dipsy's voice."
@@ -259,7 +264,15 @@ def _event_instructions(event: str, context: dict[str, Any] | None = None) -> st
             "The user explicitly asked you to do something. Return a visibly noticeable action or a short line plus an action. "
             "Do not return idle."
         )
+    if event == "action_result":
+        return (
+            "A function already ran. Use context.latest_execution and context.loop_steps as real runtime feedback. "
+            "If the task is complete, return the final user-facing follow-up with no action. "
+            "If one more allowed action is clearly needed, return exactly one next action. "
+            "Do not repeat the same failed action unless the latest execution shows a good reason to retry."
+        )
     return (
         "Answer the user's message directly, in character, with a clear and useful reply first. "
-        "Let the current emotion color the tone, and return an updated emotion object for after the reply."
+        "Let the current emotion color the tone, and return an updated emotion object for after the reply. "
+        "If the user asks for something Dipsy can do, you may return an action instead of hardcoded chat-only behavior."
     )

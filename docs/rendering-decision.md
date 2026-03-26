@@ -5,7 +5,7 @@
 Dipsy Dolphin uses `PySide6` as the desktop UI and rendering stack.
 
 This is a deliberate move away from treating the earlier Tkinter shell as the permanent presentation layer.
-Future character presentation, animation, settings, dialogue UI, and richer desktop behavior should continue building on PySide6.
+Future character presentation, animation, dialogue UI, and richer desktop behavior should continue building on PySide6.
 
 ## Why PySide6
 
@@ -71,7 +71,7 @@ Example mappings:
 
 - telling a joke -> `talk_happy`, then `laugh`
 - asking to play tic tac toe -> `ask`
-- singing a song after approval -> `sing`
+- singing a song when the user asks for it -> `sing`
 - random movement -> `walk_left` or `walk_right`
 - waiting on an LLM response -> `think`
 - idle chatter -> `talk`
@@ -115,7 +115,7 @@ Suggested metadata fields:
 
 This decision affects the runtime package design.
 
-- `dipsy_dolphin/ui/` should remain the home for rendering, windows, bubble UI, menus, and later settings.
+- `dipsy_dolphin/ui/` should remain the home for rendering, windows, bubble UI, and chat-facing interaction surfaces.
 - The actual renderer should become a dedicated PySide6-oriented UI component rather than being mixed into behavior logic.
 - `dipsy_dolphin/core/` should never depend on specific frame files or rendering tricks.
 - Behavior, emotion, LLM, and action code should communicate through named states, not direct frame manipulation.
@@ -142,7 +142,6 @@ Expand the PySide6 renderer to cover:
 
 - animation states
 - bubble styling
-- menus and settings
 - synchronized reactions
 - richer stage effects
 

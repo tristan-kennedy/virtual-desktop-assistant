@@ -4,19 +4,28 @@ import copy
 from dataclasses import replace
 from typing import Any, Protocol
 
-from .autonomy import AutonomyPlan
+from ..actions.executor import ActionExecutor, ActionExecutorProtocol
+from ..actions.models import ExecutionResult
 from ..llm.config import discover_model_bundle
 from ..llm.local_provider import LocalLlamaProvider
 from ..llm.prompt_builder import build_system_prompt, build_user_prompt
 from ..llm.response_parser import parse_assistant_turn
 from .brain import AssistantBrain
-from .controller_models import ActionRequest, AssistantTurn, ControllerResult
+from .controller_models import (
+    AssistantTurn,
+    ControllerLoopStep,
+    ControllerResult,
+)
 from .emotion import EmotionState
 from .memory import apply_memory_updates
 from .models import SessionState
 
 
 MAX_SPOKEN_CHARACTERS = 1200
+ACTION_RESULT_EVENT = "action_result"
+INACTIVE_TICK_EVENT = "inactive_tick"
+MAX_ACTION_STEPS = 2
+MAX_MODEL_PASSES = 3
 
 
 class ControllerProvider(Protocol):
@@ -33,9 +42,11 @@ class AssistantController:
         self,
         brain: AssistantBrain | None = None,
         provider: ControllerProvider | None = None,
+        action_executor: ActionExecutorProtocol | None = None,
     ) -> None:
         self.brain = brain or AssistantBrain()
         self.provider = provider or LocalLlamaProvider(discover_model_bundle())
+        self.action_executor = action_executor or ActionExecutor()
         if not self.provider.is_available():
             raise RuntimeError(self._required_llm_message())
 
@@ -117,37 +128,41 @@ class AssistantController:
         if callable(shutdown):
             shutdown()
 
-    def autonomous_turn(
+    def inactivity_turn(
         self,
         state: SessionState,
-        plan: AutonomyPlan | None = None,
         *,
         seconds_since_user_interaction: int | None = None,
+        cooldown_remaining_ms: int | None = None,
     ) -> ControllerResult:
-        active_plan = plan or AutonomyPlan(
-            mode="idle",
-            allowed_behaviors=("idle", "emote"),
-            guidance="Prefer a quiet beat.",
-            minimum_cooldown_ms=12000,
-            base_weight=1,
-        )
         return self._build_result(
-            "autonomous",
+            INACTIVE_TICK_EVENT,
             state,
             defaults=AssistantTurn(
                 animation="idle",
                 dialogue_category="thought",
                 cooldown_ms=12000,
-                behavior=active_plan.mode,
-                topic=state.last_topic or "idle",
+                behavior="idle",
+                topic=state.last_topic or "inactivity",
                 source="llm",
             ),
             event_context={
-                "autonomy_plan": active_plan.prompt_payload(
-                    seconds_since_user_interaction=seconds_since_user_interaction
-                )
+                "seconds_since_user_interaction": seconds_since_user_interaction,
+                "cooldown_remaining_ms": cooldown_remaining_ms,
             },
-            minimum_cooldown_ms=active_plan.minimum_cooldown_ms,
+        )
+
+    def autonomous_turn(
+        self,
+        state: SessionState,
+        *,
+        seconds_since_user_interaction: int | None = None,
+        cooldown_remaining_ms: int | None = None,
+    ) -> ControllerResult:
+        return self.inactivity_turn(
+            state,
+            seconds_since_user_interaction=seconds_since_user_interaction,
+            cooldown_remaining_ms=cooldown_remaining_ms,
         )
 
     def do_something_turn(self, state: SessionState) -> ControllerResult:
@@ -217,48 +232,158 @@ class AssistantController:
         minimum_cooldown_ms: int | None = None,
     ) -> ControllerResult:
         working_state = copy.deepcopy(state)
+        required_speech = self._speech_required(event)
+        required_visible = self._visible_response_required(event)
         if event == "chat" and user_text:
             working_state.remember_user_turn(user_text)
             self.brain.apply_profile_updates(user_text, working_state)
         elif event == "reset":
             self.brain.reset_state(working_state)
         defaults = replace(defaults, emotion=working_state.emotion)
+
+        loop_steps: list[ControllerLoopStep] = []
+        last_execution_result: ExecutionResult | None = None
+        loop_stop_reason = "no_action"
+        request_event = event
+        request_context = event_context
+        executed_action_steps = 0
+        final_turn: AssistantTurn | None = None
+
+        for step_index in range(1, MAX_MODEL_PASSES + 1):
+            is_initial_pass = step_index == 1
+            try:
+                turn = self._request_and_apply_turn(
+                    event=request_event,
+                    state=working_state,
+                    user_text=user_text,
+                    context=request_context,
+                    defaults=defaults,
+                    required_speech=False if is_initial_pass else required_speech,
+                    required_visible=False if is_initial_pass else required_visible,
+                    minimum_cooldown_ms=minimum_cooldown_ms,
+                    memory_updates_enabled=event == "chat",
+                )
+            except Exception:
+                if executed_action_steps <= 0:
+                    raise
+                final_turn = self._followup_error_turn(
+                    defaults=defaults,
+                    execution_result=last_execution_result,
+                )
+                loop_stop_reason = "followup_error"
+                break
+
+            if turn.action is not None and executed_action_steps >= MAX_ACTION_STEPS:
+                loop_steps.append(
+                    ControllerLoopStep(
+                        step_index=step_index,
+                        event=request_event,
+                        turn=turn,
+                        execution_result=None,
+                    )
+                )
+                final_turn = self._loop_limit_turn(defaults=defaults)
+                loop_stop_reason = "step_limit"
+                break
+
+            execution_result = self._execute_action(turn)
+            if execution_result is not None:
+                last_execution_result = execution_result
+                executed_action_steps += 1
+
+            loop_steps.append(
+                ControllerLoopStep(
+                    step_index=step_index,
+                    event=request_event,
+                    turn=turn,
+                    execution_result=execution_result,
+                )
+            )
+
+            if execution_result is None:
+                final_turn = self._finalize_visible_turn(
+                    turn,
+                    defaults=defaults,
+                    required_speech=required_speech,
+                    required_visible=required_visible,
+                )
+                loop_stop_reason = (
+                    "completed_after_action" if executed_action_steps > 0 else "no_action"
+                )
+                break
+
+            if step_index >= MAX_MODEL_PASSES:
+                final_turn = self._loop_limit_turn(defaults=defaults)
+                loop_stop_reason = "step_limit"
+                break
+
+            request_event = ACTION_RESULT_EVENT
+            request_context = self._action_result_context(
+                original_event=event,
+                original_user_text=user_text,
+                loop_steps=loop_steps,
+            )
+
+        if final_turn is None:
+            final_turn = self._loop_limit_turn(defaults=defaults)
+            loop_stop_reason = "step_limit"
+
+        self._remember_turn(final_turn, working_state)
+        if event == INACTIVE_TICK_EVENT:
+            working_state.autonomous_beats += 1
+            working_state.remember_autonomous_behavior(
+                self._autonomous_behavior_for_turn(final_turn)
+            )
+            if final_turn.say:
+                working_state.autonomous_chats += 1
+        if event == "chat" and final_turn.memory_updates:
+            working_state.memory = apply_memory_updates(working_state.memory, final_turn.memory_updates)
+        if final_turn.emotion is not None:
+            working_state.emotion = final_turn.emotion
+        working_state.last_topic = final_turn.topic or working_state.last_topic
+        working_state.autonomy_cooldown_ms = final_turn.cooldown_ms
+        return ControllerResult(
+            turn=final_turn,
+            session_state=working_state,
+            execution_result=last_execution_result,
+            loop_steps=tuple(loop_steps),
+            loop_stop_reason=loop_stop_reason,
+        )
+
+    def _request_and_apply_turn(
+        self,
+        *,
+        event: str,
+        state: SessionState,
+        user_text: str,
+        context: dict[str, object] | None,
+        defaults: AssistantTurn,
+        required_speech: bool,
+        required_visible: bool,
+        minimum_cooldown_ms: int | None,
+        memory_updates_enabled: bool,
+    ) -> AssistantTurn:
         system_prompt = build_system_prompt()
-        user_prompt = build_user_prompt(event, working_state, user_text, context=event_context)
+        user_prompt = build_user_prompt(event, state, user_text, context=context)
 
         try:
             parsed_turn = self._request_turn(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                fallback_emotion=working_state.emotion,
+                fallback_emotion=state.emotion,
             )
         except Exception as exc:
             raise RuntimeError(f"Local brain failed during '{event}': {exc}") from exc
 
-        turn = self._apply_defaults(
+        return self._apply_defaults(
             parsed_turn,
             defaults,
             event=event,
-            required_speech=self._speech_required(event),
-            required_visible=self._visible_response_required(event),
+            required_speech=required_speech,
+            required_visible=required_visible,
             minimum_cooldown_ms=minimum_cooldown_ms,
+            memory_updates_enabled=memory_updates_enabled,
         )
-        if self._speech_required(event) and not turn.say:
-            raise RuntimeError(f"Local brain returned no speech for required event '{event}'")
-
-        self._remember_turn(turn, working_state)
-        if event == "autonomous":
-            working_state.autonomous_beats += 1
-            working_state.remember_autonomous_behavior(self._autonomous_behavior_for_turn(turn))
-            if turn.say:
-                working_state.autonomous_chats += 1
-        if event == "chat" and turn.memory_updates:
-            working_state.memory = apply_memory_updates(working_state.memory, turn.memory_updates)
-        if turn.emotion is not None:
-            working_state.emotion = turn.emotion
-        working_state.last_topic = turn.topic or working_state.last_topic
-        working_state.autonomy_cooldown_ms = turn.cooldown_ms
-        return ControllerResult(turn=turn, session_state=working_state)
 
     def _request_turn(
         self,
@@ -279,13 +404,14 @@ class AssistantController:
         required_speech: bool,
         required_visible: bool,
         minimum_cooldown_ms: int | None,
+        memory_updates_enabled: bool,
     ) -> AssistantTurn:
         turn = replace(
             parsed_turn,
             say=parsed_turn.say.strip(),
             animation=parsed_turn.animation or defaults.animation,
             dialogue_category=parsed_turn.dialogue_category or defaults.dialogue_category,
-            memory_updates=parsed_turn.memory_updates if event == "chat" else (),
+            memory_updates=parsed_turn.memory_updates if memory_updates_enabled else (),
             emotion=parsed_turn.emotion or defaults.emotion,
             cooldown_ms=max(
                 parsed_turn.cooldown_ms or defaults.cooldown_ms, minimum_cooldown_ms or 0
@@ -294,35 +420,6 @@ class AssistantController:
             topic=parsed_turn.topic or defaults.topic,
             source="llm",
         )
-
-        if event == "autonomous" and turn.behavior == "roam" and turn.action is None:
-            turn = replace(turn, action=ActionRequest(action_id="roam_somewhere", args={}))
-
-        if required_speech and not turn.say:
-            return replace(
-                turn, say="I have a thought, but it slipped behind the curtain. Try me again."
-            )
-
-        if required_visible and not turn.say and self._is_non_visible_turn(turn):
-            return replace(
-                turn,
-                say="Stand back. I am preparing a tasteful burst of desktop theater.",
-                animation="excited",
-                behavior=turn.behavior or defaults.behavior or "action",
-                dialogue_category="normal",
-                topic=turn.topic or defaults.topic or "action",
-            )
-
-        if event == "autonomous" and self._is_silent_autonomous_emote(turn):
-            return turn
-
-        if not required_speech and not turn.say and turn.action is None:
-            return replace(
-                turn,
-                animation="idle",
-                action=ActionRequest(action_id="idle", args={}),
-                behavior=turn.behavior or defaults.behavior or "idle",
-            )
 
         if turn.say and len(turn.say) > MAX_SPOKEN_CHARACTERS:
             shortened = turn.say[: MAX_SPOKEN_CHARACTERS - 3].rstrip(" ,.;:!") + "..."
@@ -334,8 +431,115 @@ class AssistantController:
         if turn.say:
             state.remember_assistant_turn(turn.say)
 
+    def _finalize_visible_turn(
+        self,
+        turn: AssistantTurn,
+        *,
+        defaults: AssistantTurn,
+        required_speech: bool,
+        required_visible: bool,
+    ) -> AssistantTurn:
+        final_turn = turn
+        if required_speech and not final_turn.say:
+            final_turn = replace(
+                final_turn,
+                say="I have a thought, but it slipped behind the curtain. Try me again.",
+            )
+
+        if required_visible and not final_turn.say and self._is_non_visible_turn(final_turn):
+            final_turn = replace(
+                final_turn,
+                say="Stand back. I am preparing a tasteful burst of desktop theater.",
+                animation="excited",
+                behavior=final_turn.behavior or defaults.behavior or "action",
+                dialogue_category="normal",
+                topic=final_turn.topic or defaults.topic or "action",
+            )
+        return final_turn
+
+    def _execute_action(self, turn: AssistantTurn) -> ExecutionResult | None:
+        if turn.action is None:
+            return None
+        return self.action_executor.execute(turn.action)
+
+    def _action_result_context(
+        self,
+        *,
+        original_event: str,
+        original_user_text: str,
+        loop_steps: list[ControllerLoopStep],
+    ) -> dict[str, object]:
+        latest_step = loop_steps[-1]
+        return {
+            "original_event": original_event,
+            "original_user_text": original_user_text,
+            "step_index": latest_step.step_index,
+            "max_steps": MAX_ACTION_STEPS,
+            "latest_execution": self._serialize_execution_result(latest_step.execution_result),
+            "loop_steps": [self._serialize_loop_step(step) for step in loop_steps],
+        }
+
+    def _serialize_execution_result(
+        self,
+        execution_result: ExecutionResult | None,
+    ) -> dict[str, object]:
+        if execution_result is None:
+            return {}
+        return dict(execution_result.observation)
+
+    def _serialize_loop_step(self, step: ControllerLoopStep) -> dict[str, object]:
+        return {
+            "step_index": step.step_index,
+            "event": step.event,
+            "say": step.turn.say,
+            "action_id": step.turn.action.action_id if step.turn.action is not None else "",
+            "topic": step.turn.topic,
+            "execution_status": (
+                step.execution_result.status if step.execution_result is not None else ""
+            ),
+            "execution_message": (
+                step.execution_result.message if step.execution_result is not None else ""
+            ),
+            "directive_kind": (
+                step.execution_result.directive.kind
+                if step.execution_result is not None and step.execution_result.directive is not None
+                else ""
+            ),
+        }
+
+    def _followup_error_turn(
+        self,
+        *,
+        defaults: AssistantTurn,
+        execution_result: ExecutionResult | None,
+    ) -> AssistantTurn:
+        message = (
+            execution_result.message
+            if execution_result is not None
+            and execution_result.status in {"rejected", "failed"}
+            and execution_result.message
+            else "That act landed, but I lost the follow-up line backstage."
+        )
+        return replace(
+            defaults,
+            say=message,
+            animation="surprised",
+            dialogue_category="alert",
+            topic=defaults.topic or "action",
+        )
+
+    def _loop_limit_turn(self, *, defaults: AssistantTurn) -> AssistantTurn:
+        return replace(
+            defaults,
+            say="I need a slightly bigger backstage loop before I chain another move.",
+            animation="surprised",
+            dialogue_category="alert",
+            action=None,
+            topic=defaults.topic or "action",
+        )
+
     def _speech_required(self, event: str) -> bool:
-        return event not in {"autonomous", "do_something"}
+        return event not in {INACTIVE_TICK_EVENT, "do_something"}
 
     def _visible_response_required(self, event: str) -> bool:
         return event in {
@@ -355,19 +559,6 @@ class AssistantController:
             return False
         return turn.animation == "idle"
 
-    def _is_silent_autonomous_emote(self, turn: AssistantTurn) -> bool:
-        return (
-            turn.action is None
-            and not turn.say
-            and turn.animation
-            in {
-                "laugh",
-                "surprised",
-                "sad",
-                "excited",
-            }
-        )
-
     def _autonomous_behavior_for_turn(self, turn: AssistantTurn) -> str:
         if turn.behavior:
             return turn.behavior
@@ -386,7 +577,9 @@ class AssistantController:
             "Dipsy Dolphin requires a bundled local LLM to start.\n\n"
             "Local development setup:\n"
             "1. Run `uv sync --group local-llm`\n"
-            "2. Download the bundled model with `uv run python -m scripts.windows_build model-bundle`\n"
+            "2. Download the bundled model with "
+            "`uv run python -m scripts.windows_build model-bundle`\n"
             "3. Start the app with `uv run dipsy-dolphin`\n\n"
-            f"Current issue: {getattr(self.provider.status, 'reason', '') or 'local brain unavailable'}"
+            "Current issue: "
+            f"{getattr(self.provider.status, 'reason', '') or 'local brain unavailable'}"
         )

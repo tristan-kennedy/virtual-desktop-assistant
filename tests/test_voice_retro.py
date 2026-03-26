@@ -1,5 +1,10 @@
 from dipsy_dolphin.voice.models import VoiceOption, VoiceSettings
-from dipsy_dolphin.voice.retro import build_retro_ssml, choose_voice
+from dipsy_dolphin.voice.retro import (
+    build_retro_ssml,
+    choose_voice,
+    estimate_retro_speech_duration_ms,
+    estimate_retro_talk_pulse_ms,
+)
 
 
 def test_choose_voice_prefers_classic_retro_names() -> None:
@@ -28,7 +33,7 @@ def test_choose_voice_respects_requested_voice_id() -> None:
     assert selection.used_fallback is False
 
 
-def test_build_retro_ssml_adds_prosody_and_breaks() -> None:
+def test_build_retro_ssml_uses_consistent_prosody_without_extra_breaks() -> None:
     ssml = build_retro_ssml(
         "Hello, friend... Dramatic, isn't it?",
         category="joke",
@@ -37,5 +42,35 @@ def test_build_retro_ssml_adds_prosody_and_breaks() -> None:
 
     assert "<speak" in ssml
     assert "<prosody" in ssml
-    assert "<emphasis" in ssml
-    assert "<break time='220ms' />" in ssml
+    assert "<emphasis" not in ssml
+    assert "<break time=" not in ssml
+
+
+def test_estimated_retro_speech_duration_changes_with_rate() -> None:
+    slow_duration = estimate_retro_speech_duration_ms(
+        "Hello there, dramatic desktop friend.",
+        category="normal",
+        settings=VoiceSettings(rate=-3),
+    )
+    fast_duration = estimate_retro_speech_duration_ms(
+        "Hello there, dramatic desktop friend.",
+        category="normal",
+        settings=VoiceSettings(rate=3),
+    )
+
+    assert slow_duration > fast_duration
+
+
+def test_estimated_talk_pulse_changes_with_rate() -> None:
+    slow_pulse = estimate_retro_talk_pulse_ms(
+        category="normal",
+        settings=VoiceSettings(rate=-3),
+        pulse_kind="word",
+    )
+    fast_pulse = estimate_retro_talk_pulse_ms(
+        category="normal",
+        settings=VoiceSettings(rate=3),
+        pulse_kind="word",
+    )
+
+    assert slow_pulse > fast_pulse

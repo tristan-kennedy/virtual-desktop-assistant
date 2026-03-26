@@ -35,7 +35,7 @@ The default runtime loop is:
 2. Wait for user input or an autonomy timer.
 3. Prompt the local LLM with current session state and event context.
 4. Parse the result into structured `say`, `animation`, and optional execution intent data.
-5. Apply the presentation or route a tool or function request through the runtime interface.
+5. Apply the presentation or route any structured action through the runtime interface.
 6. Return to idle.
 
 ## Behavior categories
@@ -47,20 +47,21 @@ The default runtime loop is:
 
 Direct user chat should suppress autonomous chatter for a cooldown window so Dipsy does not talk over active interaction.
 
-## Action direction
+## Capability direction
 
-Dipsy should grow from presentation-only behavior into real computer actions through attached functions and explicit runtime interfaces.
+Dipsy should grow from presentation-only behavior into real assistant capabilities that are invoked through conversation.
 
-Near-term action goals:
+Near-term capability goals:
 
 - keep movement and on-screen behavior integrated with the main assistant loop
-- add attached functions for concrete computer capabilities
-- support richer controller loops where the model can plan, call functions, observe results, and continue
+- add explicit structured actions for concrete desktop capabilities behind chat
+- support richer controller loops where the model can plan, act, observe results, and continue when it genuinely helps
 
-Rules for actions:
+Rules for capabilities:
 
-- computer actions should be represented as explicit structured intents or tool calls
-- execution should remain inspectable in the runtime, not buried in freeform text
+- user-facing control should stay conversational rather than command-panel driven
+- computer actions should still be represented as explicit structured intents in the runtime
+- execution should remain explicit in the runtime rather than buried in freeform text
 - presentation, planning, and execution should stay separable as the interface gets more capable
 
 ## Visual direction
@@ -75,9 +76,8 @@ Rules for actions:
 These rules define the product, not just the implementation.
 
 - Visible UX: Dipsy should remain legible and interruptible as a desktop presence.
-- Clear execution surface: computer capabilities should come through explicit functions or tools.
+- Clear execution surface: computer capabilities should come through explicit structured actions behind chat.
 - Structured output: model responses should be parsed and validated before the app uses them.
-- Clear logs: when richer execution arrives, the user should be able to inspect what Dipsy proposed and what actually ran.
 - Separation of concerns: keep model prompting, execution logic, and UI presentation distinct.
 
 ## Interruption policy
@@ -115,33 +115,31 @@ V1 is done when Dipsy feels lively, readable, and consistent as a local AI deskt
 
 ### V2
 
-Goal: richer behavior orchestration and presentation.
+Goal: richer behavior orchestration, presence, and conversational polish.
 
-- emotion and mood state
-- better autonomous scheduling
-- stronger memory model and user-facing controls
-- better dialogue presentation and optional TTS
-- settings and debug surfaces
+- more theatrical routines and visible personality
+- stronger visual polish and staging
+- push-to-talk or STT input
+- persistence hardening and developer debug tooling
 
-V2 is done when Dipsy feels consistently alive, expressive, and inspectable over longer sessions.
+V2 is done when Dipsy feels consistently alive, expressive, and conversational over longer sessions.
 
 ### V3
 
-Goal: a desktop assistant with attached computer functions and richer execution loops.
+Goal: a desktop assistant with real capabilities behind chat.
 
-- broader function and tool interface
-- execution loop that can incorporate function results back into the conversation
-- audit log
-- first real integrations such as Spotify, reminders, browser actions, or app control
+- first explicit integrations such as Spotify, reminders, browser actions, or app control
+- broader structured action surface behind chat
+- richer result-aware execution flows when they improve the conversation
 
-V3 is done when Dipsy can perform useful desktop tasks through explicit runtime interfaces without collapsing the separation between character, controller, and execution.
+V3 is done when Dipsy can perform useful desktop tasks through conversation without collapsing the separation between character, controller, and execution.
 
 ## Non-goals for now
 
 - vague capability claims that are not backed by real runtime interfaces
 - opaque controller logic that mixes prompting, planning, and execution together
 - desktop actions that bypass the structured runtime path
-- UI code that directly owns tool execution details
+- UI code that directly owns execution details
 
 ## Product test
 

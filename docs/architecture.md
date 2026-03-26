@@ -9,13 +9,13 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 ## Runtime flow
 
 1. `dipsy_dolphin.__main__` runs `dipsy_dolphin.ui.app.run()`.
-2. `dipsy_dolphin.ui.app.AssistantApp` creates the pet window, bubble UI, timers, and menus.
+2. `dipsy_dolphin.ui.app.AssistantApp` creates the pet window, bubble UI, timers, and chat entry flow.
 3. The app loads a `UserProfile` from `%LOCALAPPDATA%` through `dipsy_dolphin.storage.profile_store.ProfileStore`.
 4. The app creates a fresh `SessionState` and an `AssistantController`.
 5. `AssistantController` builds a system prompt and event payload through `dipsy_dolphin.llm.prompt_builder`.
 6. `dipsy_dolphin.llm.local_provider.LocalLlamaProvider` locates the bundled model and llama.cpp runtime, starts the local server if needed, and requests a response.
 7. `dipsy_dolphin.llm.response_parser` extracts and sanitizes the JSON into an `AssistantTurn` with dialogue category, animation hint, emotion, and action data.
-8. `dipsy_dolphin.actions.registry` validates any requested action id against the current tool registry.
+8. `dipsy_dolphin.actions.registry` and the execution layer validate any requested action id against the current action registry.
 9. `AssistantApp` applies the returned speech, animation, and any execution result to the UI and persists profile updates when needed.
 
 ## Runtime modules
@@ -48,7 +48,7 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 ### Function and action interface
 
 - `dipsy_dolphin/actions/registry.py` is the current source of truth for action ids and sanitization.
-- This registry is the bootstrap version of a broader function and tool execution surface.
+- Chat is the user-facing control path, while structured actions remain internal runtime plumbing.
 - Model output should continue flowing through structured runtime contracts rather than ad-hoc string execution.
 
 ### Persistence and packaging
@@ -78,8 +78,8 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 
 - Add an emotion or mood layer inside `dipsy_dolphin/core/` that feeds animation and dialogue style.
 - Grow the existing autonomous behavior scheduler with richer preferences and memory as needed.
-- Expand storage carefully for memory, settings, tool history, and execution state when those systems land.
-- Grow `dipsy_dolphin/actions/` from the current registry into a fuller function and tool execution layer.
+- Expand storage carefully for memory, preferences, and any durable execution state that proves necessary.
+- Grow `dipsy_dolphin/actions/` from the current registry into a fuller action and capability execution layer.
 - Add `docs/decisions/` if the architecture starts gaining more major irreversible choices.
 
 ## Testing priorities

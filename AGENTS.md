@@ -5,11 +5,13 @@
 Dipsy Dolphin is a playful desktop companion inspired by retro assistants like BonziBuddy. The app should stay visibly theatrical, character-driven, and architecturally clear.
 
 The runtime is now LLM-first: the UI prompts a bundled local model, parses the result into structured assistant turns, and only then applies presentation or execution through explicit runtime interfaces.
+The user-facing control path is chat, even when internal structured actions or capabilities are involved.
 
 ## Hard rules
 
 - Keep Dipsy's visible behaviors playful and transparent.
 - Prefer visible UX over hidden behavior.
+- Treat chat as the primary user-facing control surface.
 - Keep model-facing intent, execution logic, and UI presentation separate.
 - Route computer actions through explicit tool or function interfaces rather than ad-hoc string handling.
 
@@ -27,7 +29,7 @@ The runtime is now LLM-first: the UI prompts a bundled local model, parses the r
 - `dipsy_dolphin/core/brain.py`: profile parsing and reset helpers, not the main conversation engine.
 - `dipsy_dolphin/core/models.py`: shared user/session state.
 - `dipsy_dolphin/llm/`: prompt assembly, response parsing, local provider, and model/runtime discovery.
-- `dipsy_dolphin/actions/registry.py`: initial action/tool registry.
+- `dipsy_dolphin/actions/registry.py`: initial action registry.
 - `dipsy_dolphin/storage/profile_store.py`: local profile persistence.
 - `scripts/windows_build.py`: Windows packaging and model-bundle orchestration.
 - `packaging/windows/`: packaging shims and Inno Setup assets.
@@ -35,7 +37,7 @@ The runtime is now LLM-first: the UI prompts a bundled local model, parses the r
 ## Working style
 
 - Keep modules small and explicit.
-- Preserve the separation between UI host, controller logic, LLM contract, and action or function interfaces.
+- Preserve the separation between UI host, controller logic, LLM contract, and internal action or function interfaces.
 - Favor simple Python and standard library usage where practical.
 - Keep packaging and CI files out of `dipsy_dolphin/`.
 - Use `TODO.md` as the default roadmap unless the user asks for a different priority.
@@ -49,8 +51,8 @@ The runtime is now LLM-first: the UI prompts a bundled local model, parses the r
 - Better idle behavior scheduling.
 - Emotion and mood state that drives presentation.
 - Better dialogue presentation or optional voice playback.
-- Richer function and tool execution surfaces behind clear controller contracts.
-- Better settings and debug views.
+- Richer assistant capabilities behind chat and clear controller contracts.
+- Better developer debug views and lightweight internal tooling.
 
 ## Changes to avoid by default
 

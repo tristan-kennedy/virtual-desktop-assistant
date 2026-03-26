@@ -38,7 +38,7 @@ def load_character_manifest(character_id: str = "dipsy") -> CharacterAssetManife
         bounds=CharacterBounds(
             width=int(canvas.get("width", 200)),
             height=int(canvas.get("height", 220)),
-            bubble_anchor=_as_point(anchors.get("bubble"), (154, 54)),
+            bubble_anchor=_as_point(anchors.get("bubble"), (104, 40)),
             feet_anchor=_as_point(anchors.get("feet"), (104, 194)),
             look_anchor=_as_point(anchors.get("look"), (104, 74)),
         ),
@@ -71,7 +71,7 @@ def _default_manifest(character_id: str) -> CharacterAssetManifest:
         bounds=CharacterBounds(
             width=200,
             height=220,
-            bubble_anchor=(154, 54),
+            bubble_anchor=(104, 40),
             feet_anchor=(104, 194),
             look_anchor=(104, 74),
         ),

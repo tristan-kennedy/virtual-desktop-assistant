@@ -1,13 +1,13 @@
 # Dipsy Dolphin
 
 Dipsy Dolphin is a small Windows desktop companion inspired by theatrical retro assistants like BonziBuddy.
-It is intentionally visible, character-driven, and local-first: a floating UI talks to a bundled local LLM, turns the model output into structured turns, and keeps the runtime legible as the project grows toward function-based computer actions.
+It is intentionally visible, character-driven, and local-first: a floating UI talks to a bundled local LLM, turns the model output into structured turns, and keeps the runtime legible as the project grows toward richer assistant capabilities through conversation.
 
 ## What the app does
 
 - Shows a floating PySide6 desktop character.
-- Supports drag-to-move, right-click actions, and quick chat.
-- Uses a bundled local GGUF model through llama.cpp for startup, onboarding, chat, jokes, status, and autonomous turns.
+- Supports drag-to-move and quick chat directly with the character.
+- Uses a bundled local GGUF model through llama.cpp for startup, onboarding, chat-first requests, and inactivity-driven turns.
 - Parses model output into structured turn data including `say`, `dialogue_category`, `animation`, `emotion`, `memory_updates`, and `action` before the UI uses it.
 - Plays visible presentation states like idle, walk, think, talk, laugh, surprised, sad, and excited.
 - Can speak lines through an optional retro Windows voice service that prefers classic old-school voices and keeps speech interruptible.
@@ -17,7 +17,7 @@ It is intentionally visible, character-driven, and local-first: a floating UI ta
 
 - The app is currently built around a bundled local model and a single desktop UI host.
 - Model output is translated into structured runtime data before presentation or execution.
-- The current action surface is small, but the architecture is intended to expand toward attached functions and richer tool use.
+- The current capability surface is small, but the architecture is intended to expand toward richer assistant actions invoked through chat.
 - Core behavior, presentation, and execution plumbing should stay separated as the interface grows.
 
 ## Current runtime shape
@@ -32,7 +32,7 @@ It is intentionally visible, character-driven, and local-first: a floating UI ta
 - `dipsy_dolphin/llm/response_parser.py` - JSON extraction, validation, and sanitization of model output.
 - `dipsy_dolphin/llm/local_provider.py` - bundled llama.cpp runtime management and local generation requests.
 - `dipsy_dolphin/llm/config.py`, `dipsy_dolphin/llm/model_catalog.py`, `dipsy_dolphin/llm/runtime_catalog.py` - model/runtime discovery and bundle metadata.
-- `dipsy_dolphin/actions/registry.py` - initial action/tool registry used to sanitize structured action requests.
+- `dipsy_dolphin/actions/registry.py` - current action registry used to sanitize structured action requests.
 - `dipsy_dolphin/ui/presentation_policy.py`, `dipsy_dolphin/ui/presentation_controller.py`, `dipsy_dolphin/ui/animation_state_machine.py`, `dipsy_dolphin/ui/character_widget.py`, and `dipsy_dolphin/ui/character_renderer.py` - semantic presentation mapping, animation state handling, bubble styling, and character drawing.
 - `dipsy_dolphin/storage/profile_store.py` and `dipsy_dolphin/storage/memory_store.py` - local profile and memory persistence.
 - `dipsy_dolphin/voice/` - retro voice selection, Windows speech backend, and isolated speech service contracts.
@@ -71,6 +71,16 @@ uv run dipsy-dolphin
 ```
 
 Local development now requires both the bundled model and the bundled llama.cpp runtime. If you manage the model file manually, place it under `.artifacts/local-models/default/` using the filename declared in `dipsy_dolphin/llm/model_catalog.py`.
+
+If the repo-local `.venv` points at a missing uv-managed interpreter under `AppData\Roaming\uv\python\...`, treat the venv as disposable local state and recreate it:
+
+```powershell
+Remove-Item -Recurse -Force .venv
+uv python install
+uv sync --group local-llm
+```
+
+If `uv run ...` fails before startup with an error around `C:\Users\<you>\AppData\Local\uv\cache`, fix that local uv cache path first and then rerun the normal setup commands above. The repo does not attempt to repair user-level uv cache state automatically.
 
 Profile data, including voice settings, is stored in `%LOCALAPPDATA%\DipsyDolphin\data\profile.json` and memory data is stored in `%LOCALAPPDATA%\DipsyDolphin\data\memory.json`.
 
@@ -142,9 +152,8 @@ git push origin main
 ## Controls
 
 - Drag with left click to move the character.
-- Right click to open the action menu.
-- Use the `Voice` submenu to mute, preview, or tune retro speech output.
-- Double click to open chat.
+- Double click Dipsy to open chat.
+- Ask through chat when you want Dipsy to do something, including closing the app.
 - Press `Esc` to quit.
 
 ## Current testing focus
@@ -158,11 +167,11 @@ git push origin main
 
 ## Suggested next additions
 
-- Add an explicit emotion model that feeds animation and dialogue choices.
-- Replace simple idle timing with a behavior scheduler.
-- Expand memory beyond name and interests.
-- Add richer bubble/dialogue presentation and optional TTS.
-- Grow the action and function interface beyond the current bootstrap registry.
+- Add first real assistant capabilities through chat, such as browser search, reminders, or notes.
+- Add more theatrical scene behaviors and stronger visible routines.
+- Keep improving visual polish, staging, and sprite presentation.
+- Add push-to-talk or STT input.
+- Harden persistence, migrations, and developer observability.
 
 ## AI-friendly workflow
 

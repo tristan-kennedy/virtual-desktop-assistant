@@ -60,16 +60,38 @@ def choose_voice(
 def build_retro_ssml(text: str, *, category: str, settings: VoiceSettings) -> str:
     bounded = settings.bounded()
     escaped_text = _stylize_text(text)
-    rate = _rate_percent(bounded.rate + _category_rate_delta(category))
-    pitch = _pitch_value(bounded.pitch + _category_pitch_delta(category))
-    emphasis = _category_emphasis(category)
+    rate = _rate_percent(_effective_rate_value(bounded))
+    pitch = _pitch_value(bounded.pitch)
     return (
         "<speak version='1.0' xml:lang='en-US' xmlns='http://www.w3.org/2001/10/synthesis'>"
         f"<prosody rate='{rate}' pitch='{pitch}'>"
-        f"<emphasis level='{emphasis}'>{escaped_text}</emphasis>"
+        f"{escaped_text}"
         "</prosody>"
         "</speak>"
     )
+
+
+def estimate_retro_speech_duration_ms(text: str, *, category: str, settings: VoiceSettings) -> int:
+    cleaned = " ".join(text.split()).strip()
+    if not cleaned:
+        return 0
+
+    words = max(1, len(cleaned.split()))
+    base_duration_ms = int((words / 170.0) * 60_000)
+    rate_multiplier = _rate_multiplier(_effective_rate_value(settings.bounded()))
+    adjusted_duration_ms = int(base_duration_ms / rate_multiplier)
+    return max(1400, min(15_000, adjusted_duration_ms + 280))
+
+
+def estimate_retro_talk_pulse_ms(
+    *, category: str, settings: VoiceSettings, pulse_kind: str = "word"
+) -> int:
+    base_duration_ms = 700 if pulse_kind == "started" else 420
+    rate_multiplier = _rate_multiplier(_effective_rate_value(settings.bounded()))
+    adjusted = int(base_duration_ms / rate_multiplier)
+    minimum = 240 if pulse_kind == "started" else 150
+    maximum = 900 if pulse_kind == "started" else 520
+    return max(minimum, min(maximum, adjusted))
 
 
 def _retro_score(voice: VoiceOption) -> int:
@@ -98,12 +120,7 @@ def _retro_score(voice: VoiceOption) -> int:
 
 def _stylize_text(text: str) -> str:
     cleaned = " ".join(text.split()).strip()
-    escaped = escape(cleaned)
-    escaped = escaped.replace("...", "<break time='220ms' />")
-    escaped = escaped.replace("!", "!<break time='120ms' />")
-    escaped = escaped.replace("?", "?<break time='100ms' />")
-    escaped = escaped.replace(",", ",<break time='80ms' />")
-    return escaped
+    return escape(cleaned)
 
 
 def _rate_percent(rate: int) -> str:
@@ -111,34 +128,16 @@ def _rate_percent(rate: int) -> str:
     return f"{bounded * 9:+d}%"
 
 
+def _rate_multiplier(rate: int) -> float:
+    bounded = max(-10, min(10, rate))
+    return max(0.25, 1.0 + (bounded * 0.09))
+
+
+def _effective_rate_value(settings: VoiceSettings) -> int:
+    return settings.bounded().rate
+
+
 def _pitch_value(pitch: int) -> str:
     bounded = max(-10, min(10, pitch))
     return f"{bounded:+d}st"
 
-
-def _category_rate_delta(category: str) -> int:
-    if category == "joke":
-        return 2
-    if category == "alert":
-        return 1
-    if category == "status":
-        return -1
-    return 0
-
-
-def _category_pitch_delta(category: str) -> int:
-    if category == "joke":
-        return 1
-    if category == "alert":
-        return 1
-    if category == "thought":
-        return -1
-    return 0
-
-
-def _category_emphasis(category: str) -> str:
-    if category in {"joke", "alert", "onboarding"}:
-        return "strong"
-    if category == "status":
-        return "moderate"
-    return "reduced"
