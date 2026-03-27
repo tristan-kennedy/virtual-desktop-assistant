@@ -1,9 +1,11 @@
 import json
 
+from dipsy_dolphin.actions.executor import ActionExecutor
 from dipsy_dolphin.actions.models import ExecutionResult
 from dipsy_dolphin.core.controller import AssistantController
 from dipsy_dolphin.core.emotion import EmotionState
 from dipsy_dolphin.core.models import SessionState
+from dipsy_dolphin.desktop.models import DesktopOperationResult
 
 
 def _emotion_payload(**overrides: int) -> dict[str, int]:
@@ -70,6 +72,58 @@ class RejectedActionExecutor:
             action_id=request.action_id,
             status="rejected",
             message="That routine is tangled in the curtain cord.",
+        )
+
+
+class FakeDesktopBackend:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def focus_or_open_app(self, app_id: str) -> DesktopOperationResult:
+        self.calls.append(("focus_or_open_app", app_id))
+        return DesktopOperationResult(
+            operation="focus_or_open_app",
+            target=app_id,
+            resolved_app_id=app_id,
+            status="success",
+            message=f"Focused {app_id}.",
+            focused=True,
+        )
+
+    def browser_search(self, query: str) -> DesktopOperationResult:
+        self.calls.append(("browser_search", query))
+        return DesktopOperationResult(
+            operation="browser_search",
+            target=query,
+            resolved_app_id="browser",
+            status="success",
+            message=f"Searched for {query}.",
+            launched=True,
+            opened=True,
+        )
+
+    def open_url(self, url: str) -> DesktopOperationResult:
+        self.calls.append(("open_url", url))
+        return DesktopOperationResult(
+            operation="open_url",
+            target=url,
+            resolved_app_id="browser",
+            status="success",
+            message=f"Opened {url}.",
+            launched=True,
+            opened=True,
+        )
+
+    def open_path(self, path: str) -> DesktopOperationResult:
+        self.calls.append(("open_path", path))
+        return DesktopOperationResult(
+            operation="open_path",
+            target=path,
+            resolved_app_id="explorer",
+            status="success",
+            message=f"Opened {path}.",
+            launched=True,
+            opened=True,
         )
 
 
@@ -412,3 +466,77 @@ def test_controller_supports_quit_action_and_followup_line() -> None:
     assert result.execution_result.directive.kind == "request_quit"
     assert result.turn.say == "All right, slipping backstage now."
     assert result.loop_stop_reason == "completed_after_action"
+
+
+def test_controller_passes_browser_search_results_into_followup_prompt() -> None:
+    provider = SequenceProvider(
+        {
+            "say": "I will look that up.",
+            "animation": "excited",
+            "dialogue_category": "normal",
+            "action": {"action_id": "browser_search", "args": {"query": "weather today"}},
+            "cooldown_ms": 12000,
+            "topic": "weather",
+        },
+        {
+            "say": "Weather search is open in your browser.",
+            "animation": "talk",
+            "dialogue_category": "normal",
+            "action": None,
+            "cooldown_ms": 12000,
+            "topic": "weather",
+        },
+    )
+    backend = FakeDesktopBackend()
+    controller = AssistantController(
+        provider=provider,
+        action_executor=ActionExecutor(desktop_backend=backend),
+    )
+    state = SessionState()
+
+    result = controller.handle_user_message("Search the web for weather today", state)
+
+    assert backend.calls == [("browser_search", "weather today")]
+    assert result.execution_result is not None
+    assert result.execution_result.observation["operation"] == "browser_search"
+    assert result.execution_result.observation["opened"] is True
+    assert provider.prompts[1]["context"]["latest_execution"]["operation"] == "browser_search"
+    assert provider.prompts[1]["context"]["latest_execution"]["target"] == "weather today"
+    assert provider.prompts[1]["context"]["loop_steps"][0]["resolved_app_id"] == "browser"
+    assert result.turn.say == "Weather search is open in your browser."
+
+
+def test_controller_passes_focus_or_open_app_results_into_followup_prompt() -> None:
+    provider = SequenceProvider(
+        {
+            "say": "I can pop Notepad open.",
+            "animation": "excited",
+            "dialogue_category": "normal",
+            "action": {"action_id": "focus_or_open_app", "args": {"app_id": "notepad"}},
+            "cooldown_ms": 12000,
+            "topic": "notes",
+        },
+        {
+            "say": "Notepad is onstage.",
+            "animation": "talk",
+            "dialogue_category": "normal",
+            "action": None,
+            "cooldown_ms": 12000,
+            "topic": "notes",
+        },
+    )
+    backend = FakeDesktopBackend()
+    controller = AssistantController(
+        provider=provider,
+        action_executor=ActionExecutor(desktop_backend=backend),
+    )
+    state = SessionState()
+
+    result = controller.handle_user_message("Open Notepad", state)
+
+    assert backend.calls == [("focus_or_open_app", "notepad")]
+    assert result.execution_result is not None
+    assert result.execution_result.observation["focused"] is True
+    assert provider.prompts[1]["context"]["latest_execution"]["resolved_app_id"] == "notepad"
+    assert provider.prompts[1]["context"]["loop_steps"][0]["action_id"] == "focus_or_open_app"
+    assert result.turn.say == "Notepad is onstage."

@@ -32,6 +32,7 @@ It is intentionally visible, character-driven, and local-first: a floating UI ta
 - `dipsy_dolphin/llm/response_parser.py` - JSON extraction, validation, and sanitization of model output.
 - `dipsy_dolphin/llm/local_provider.py` - bundled llama.cpp runtime management and local generation requests.
 - `dipsy_dolphin/llm/config.py`, `dipsy_dolphin/llm/model_catalog.py`, `dipsy_dolphin/llm/runtime_catalog.py` - model/runtime discovery and bundle metadata.
+- `dipsy_dolphin/desktop/` - Windows desktop-control backend, app catalog, and bounded app launch/focus/open helpers.
 - `dipsy_dolphin/actions/registry.py` - current action registry used to sanitize structured action requests.
 - `dipsy_dolphin/ui/presentation_policy.py`, `dipsy_dolphin/ui/presentation_controller.py`, `dipsy_dolphin/ui/animation_state_machine.py`, `dipsy_dolphin/ui/character_widget.py`, and `dipsy_dolphin/ui/character_renderer.py` - semantic presentation mapping, animation state handling, bubble styling, and character drawing.
 - `dipsy_dolphin/storage/profile_store.py` and `dipsy_dolphin/storage/memory_store.py` - local profile and memory persistence.
@@ -167,7 +168,7 @@ git push origin main
 
 ## Suggested next additions
 
-- Add first real assistant capabilities through chat, such as browser search, reminders, or notes.
+- Expand beyond the first desktop-control slice into richer assistant capabilities such as reminders, notes, or deeper app integrations.
 - Add more theatrical scene behaviors and stronger visible routines.
 - Keep improving visual polish, staging, and sprite presentation.
 - Add push-to-talk or STT input.

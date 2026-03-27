@@ -488,6 +488,9 @@ class AssistantController:
         return dict(execution_result.observation)
 
     def _serialize_loop_step(self, step: ControllerLoopStep) -> dict[str, object]:
+        observation = (
+            step.execution_result.observation if step.execution_result is not None else {}
+        )
         return {
             "step_index": step.step_index,
             "event": step.event,
@@ -500,6 +503,13 @@ class AssistantController:
             "execution_message": (
                 step.execution_result.message if step.execution_result is not None else ""
             ),
+            "operation": str(observation.get("operation", "")),
+            "target": str(observation.get("target", "")),
+            "resolved_app_id": str(observation.get("resolved_app_id", "")),
+            "launched": bool(observation.get("launched", False)),
+            "focused": bool(observation.get("focused", False)),
+            "opened": bool(observation.get("opened", False)),
+            "failure_reason": str(observation.get("failure_reason", "")),
             "directive_kind": (
                 step.execution_result.directive.kind
                 if step.execution_result is not None and step.execution_result.directive is not None

@@ -10,7 +10,7 @@ Use this file as the default implementation order unless the user gives a differ
 - Emotion, inactivity scheduling, richer dialogue presentation, structured memory, and TTS are in place.
 - Structured action execution and a bounded controller loop are in place.
 - The shell is now character plus conversation, without menu-driven controls.
-- The next major gaps are first real assistant capabilities through chat, more theatrical routines, stronger visual polish, push-to-talk or STT, persistence hardening, and developer observability.
+- The next major gaps are more theatrical routines, stronger visual polish, push-to-talk or STT, persistence hardening, and developer observability.
 
 ## Phase map
 
@@ -138,12 +138,13 @@ Use this file as the default implementation order unless the user gives a differ
 - Done when: Dipsy can handle multi-step capability-backed interactions without collapsing everything into one prompt.
 - Status: completed through the bounded loop in `dipsy_dolphin/core/controller.py`, `ControllerLoopStep`, and the `action_result` follow-up prompt contract.
 
-17. Add first real assistant capabilities through chat
+17. Add first real assistant capabilities through chat [done]
 
 - Build targeted adapters for things like Spotify, browser search, reminders, notes, and other explicit app surfaces.
 - Invoke them through conversation and structured runtime actions rather than separate UI controls.
 - Prefer explicit APIs or predictable command paths over fragile UI automation where practical.
 - Done when: Dipsy can complete a few useful desktop tasks through chat in a robust, debuggable way.
+- Status: completed through the Windows desktop backend in `dipsy_dolphin/desktop/`, typed action validation in `dipsy_dolphin/actions/registry.py`, executor-backed desktop actions in `dipsy_dolphin/actions/executor.py`, and updated prompt/controller wiring for app launch, focus, URL open, path open, and browser search.
 
 18. Add theatrical scene behaviors
 
@@ -209,11 +210,39 @@ Use this file as the default implementation order unless the user gives a differ
 
 If work resumes soon, the recommended next build order is:
 
-1. `17` first real assistant capabilities through chat
-2. `18` theatrical scene behaviors
-3. `19` visual improvement passes
-4. `21` push-to-talk or STT
-5. `22` persistence hardening
-6. `23` developer observability and debug tooling
-7. `24` test expansion
-8. `25` packaging and release polish
+1. `18` theatrical scene behaviors
+2. `19` visual improvement passes
+3. `21` push-to-talk or STT
+4. `22` persistence hardening
+5. `23` developer observability and debug tooling
+6. `24` test expansion
+7. `25` packaging and release polish
+
+## Desktop capability enhancements
+
+These are follow-up improvements to the current desktop-control slice and should stay behind the same chat-first, structured-action runtime path.
+
+- Expand app opening beyond the fixed catalog:
+  - add alias maps for common app names like Chrome, Edge, Firefox, VS Code, Obsidian, Discord, and Spotify
+  - support direct executable-style names when they can be resolved safely
+  - search installed apps or Start Menu shortcuts before giving up
+  - allow fuzzy matching against known app aliases and visible window titles, with a clear follow-up when the match is ambiguous
+
+- Expand file and folder opening beyond literal existing paths:
+  - resolve relative paths, home-directory shortcuts, and environment-variable paths
+  - detect quoted or obvious file paths in chat more reliably
+  - search a bounded set of likely folders for direct file-name requests when the user does not provide a full path
+  - support fuzzy file-name matching with visible clarification when more than one candidate fits
+
+- Improve “try anyway” behavior while staying transparent:
+  - attempt best-effort resolution for direct app and file references instead of hard failing immediately
+  - report the resolved target back in the follow-up line so the user can see what Dipsy actually opened
+  - require confirmation when fuzzy matching would otherwise open the wrong app, file, or folder
+
+- Broaden the desktop action surface carefully:
+  - add explicit actions for open-with-app, reveal-in-Explorer, and focus-existing-window-by-title
+  - preserve bounded validation and avoid falling back to raw shell commands
+
+- Keep improving the prompt and controller contract:
+  - teach the model when to prefer exact path open, fuzzy target resolution, browser search, or app focus
+  - include structured ambiguity and resolution results in action observations so follow-up turns stay grounded

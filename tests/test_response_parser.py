@@ -95,3 +95,27 @@ def test_parse_assistant_turn_sanitizes_memory_updates() -> None:
     assert turn.memory_updates[0].action == "remember"
     assert turn.memory_updates[0].section == "preferences"
     assert turn.memory_updates[0].value == "likes shopping"
+
+
+def test_parse_assistant_turn_keeps_valid_desktop_action_args() -> None:
+    turn = parse_assistant_turn(
+        {
+            "say": "Opening notepad.",
+            "action": {"action_id": "focus_or_open_app", "args": {"app_id": "Notepad"}},
+        }
+    )
+
+    assert turn.action is not None
+    assert turn.action.action_id == "focus_or_open_app"
+    assert turn.action.args == {"app_id": "notepad"}
+
+
+def test_parse_assistant_turn_drops_invalid_desktop_action_args() -> None:
+    turn = parse_assistant_turn(
+        {
+            "say": "Opening something odd.",
+            "action": {"action_id": "open_url", "args": {"url": "file:///temp/nope"}},
+        }
+    )
+
+    assert turn.action is None

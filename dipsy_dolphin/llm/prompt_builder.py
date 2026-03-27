@@ -1,11 +1,12 @@
 import json
 from typing import Any
 
-from ..actions.registry import allowed_action_names
+from ..actions.registry import action_prompt_payload, allowed_action_names
 from ..core.dialogue import DIALOGUE_CATEGORIES
 from ..core.emotion import EmotionState
 from ..core.memory import MEMORY_SECTIONS, WRITABLE_MEMORY_SECTIONS, summarize_memory
 from ..core.models import SessionState
+from ..desktop.catalog import app_catalog_prompt_payload
 
 
 ALLOWED_ANIMATIONS = (
@@ -25,7 +26,10 @@ def build_system_prompt() -> str:
         "say": "string; required for startup, onboarding, chat, joke, status, reset; optional for inactivity ticks",
         "dialogue_category": list(DIALOGUE_CATEGORIES),
         "animation": "optional visible hint; use one of " + ", ".join(ALLOWED_ANIMATIONS),
-        "action": {"action_id": list(allowed_action_names()), "args": {}},
+        "action": {
+            "action_id": list(allowed_action_names()),
+            "args": "must match the registered arg schema for that action_id",
+        },
         "memory_updates": [
             {
                 "action": ["remember", "forget"],
@@ -112,12 +116,27 @@ def build_system_prompt() -> str:
                 "say": "<short follow-up that reacts to the real function result>",
                 "dialogue_category": "normal",
                 "animation": "talk",
-                "action": {"action_id": "roam_somewhere", "args": {}},
+                "action": {"action_id": "browser_search", "args": {"query": "weather today"}},
                 "memory_updates": [],
                 "emotion": emotion_example,
                 "cooldown_ms": 12000,
                 "behavior": "action",
                 "topic": "action",
+            },
+        },
+        {
+            "event": "chat",
+            "shape": "supported desktop app control request",
+            "output": {
+                "say": "I can bring that onstage.",
+                "dialogue_category": "normal",
+                "animation": "excited",
+                "action": {"action_id": "focus_or_open_app", "args": {"app_id": "notepad"}},
+                "memory_updates": [],
+                "emotion": emotion_example,
+                "cooldown_ms": 10000,
+                "behavior": "action",
+                "topic": "app_control",
             },
         },
     ]
@@ -139,6 +158,11 @@ def build_system_prompt() -> str:
             "Chat is the main way the user should ask for jokes, movement, status, and other supported routines.",
             "App-level actions also happen through chat. If the user clearly asks Dipsy to leave, close, quit, or go away now, you may use quit_app.",
             "Do not use quit_app for casual sign-offs unless the user is clearly asking to close Dipsy itself.",
+            "Desktop control is bounded and explicit. Never invent shell commands, PowerShell, clicks, typing, or raw executable names.",
+            "For supported app launch or focus requests, use focus_or_open_app with one stable app_id from the supported app catalog.",
+            "For web searches, prefer browser_search with a concise query string.",
+            "For opening a website, use open_url with an absolute http or https URL.",
+            "For opening a local file or folder, use open_path only when the user clearly points to a local path already mentioned in chat.",
             "Inactivity ticks are neutral opportunities after quiet time, not pre-scripted behavior requests.",
             "During inactivity, prioritize variety across beats instead of repeating one pattern.",
             "Do not default to leading questions about interests or repeatedly probe the user for more facts during inactivity.",
@@ -149,6 +173,8 @@ def build_system_prompt() -> str:
             "Memory updates should be short concept summaries, not quotes. Use [] when nothing new should be remembered.",
             "Do not write memory_updates for inactivity ticks, joke, status, reset, or other non-chat events unless the event explicitly includes user-provided facts.",
             f"Allowed action ids: {', '.join(allowed_action_names())}.",
+            f"Supported desktop app ids: {json.dumps(app_catalog_prompt_payload(), ensure_ascii=True)}",
+            f"Registered action schemas: {json.dumps(action_prompt_payload(), ensure_ascii=True)}",
             f"Response contract: {json.dumps(contract, ensure_ascii=True)}",
             f"Response shape hints: {json.dumps(response_shapes, ensure_ascii=True)}",
         ]

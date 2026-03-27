@@ -16,7 +16,8 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 6. `dipsy_dolphin.llm.local_provider.LocalLlamaProvider` locates the bundled model and llama.cpp runtime, starts the local server if needed, and requests a response.
 7. `dipsy_dolphin.llm.response_parser` extracts and sanitizes the JSON into an `AssistantTurn` with dialogue category, animation hint, emotion, and action data.
 8. `dipsy_dolphin.actions.registry` and the execution layer validate any requested action id against the current action registry.
-9. `AssistantApp` applies the returned speech, animation, and any execution result to the UI and persists profile updates when needed.
+9. `dipsy_dolphin.desktop` handles bounded Windows desktop operations like app focus, app launch, URL open, path open, and browser search behind explicit runtime interfaces.
+10. `AssistantApp` applies the returned speech, animation, and any execution result to the UI and persists profile updates when needed.
 
 ## Runtime modules
 
@@ -48,6 +49,7 @@ The active desktop shell uses PySide6 and the rendering direction is sprite-styl
 ### Function and action interface
 
 - `dipsy_dolphin/actions/registry.py` is the current source of truth for action ids and sanitization.
+- `dipsy_dolphin/desktop/` is the Windows-only OS-control boundary used by the executor for bounded desktop actions.
 - Chat is the user-facing control path, while structured actions remain internal runtime plumbing.
 - Model output should continue flowing through structured runtime contracts rather than ad-hoc string execution.
 

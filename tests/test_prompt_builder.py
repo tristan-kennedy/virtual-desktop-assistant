@@ -21,6 +21,11 @@ def test_system_prompt_avoids_literal_stock_example_lines() -> None:
     assert "Longer quiet stretches are good" in prompt
     assert "quit_app" in prompt
     assert "Do not use quit_app for casual sign-offs" in prompt
+    assert "focus_or_open_app" in prompt
+    assert "browser_search" in prompt
+    assert "Registered action schemas" in prompt
+    assert "Supported desktop app ids" in prompt
+    assert "Never invent shell commands" in prompt
     assert '"emotion"' in prompt
     assert '"dialogue_category"' in prompt
     assert '"memory_updates"' in prompt
@@ -72,22 +77,35 @@ def test_action_result_prompt_includes_latest_execution_and_loop_trace() -> None
                 "step_index": 1,
                 "max_steps": 2,
                 "latest_execution": {
-                    "action_id": "roam_somewhere",
+                    "action_id": "browser_search",
                     "status": "success",
-                    "message": "Move Dipsy to another spot on screen.",
-                    "directive_kind": "start_walk",
-                    "args": {},
+                    "message": "Opened a browser search for weather today.",
+                    "args": {"query": "weather today"},
+                    "operation": "browser_search",
+                    "target": "weather today",
+                    "resolved_app_id": "browser",
+                    "launched": True,
+                    "focused": False,
+                    "opened": True,
+                    "failure_reason": "",
                 },
                 "loop_steps": [
                     {
                         "step_index": 1,
                         "event": "chat",
-                        "say": "I am taking a dramatic lap.",
-                        "action_id": "roam_somewhere",
+                        "say": "I am checking the weather.",
+                        "action_id": "browser_search",
                         "topic": "chat",
                         "execution_status": "success",
-                        "execution_message": "Move Dipsy to another spot on screen.",
-                        "directive_kind": "start_walk",
+                        "execution_message": "Opened a browser search for weather today.",
+                        "operation": "browser_search",
+                        "target": "weather today",
+                        "resolved_app_id": "browser",
+                        "launched": True,
+                        "focused": False,
+                        "opened": True,
+                        "failure_reason": "",
+                        "directive_kind": "",
                     }
                 ],
             },
@@ -97,8 +115,10 @@ def test_action_result_prompt_includes_latest_execution_and_loop_trace() -> None
     assert payload["event"] == "action_result"
     assert payload["user_text"] == "Tell me a joke"
     assert payload["context"]["original_event"] == "chat"
-    assert payload["context"]["latest_execution"]["directive_kind"] == "start_walk"
-    assert payload["context"]["loop_steps"][0]["action_id"] == "roam_somewhere"
+    assert payload["context"]["latest_execution"]["operation"] == "browser_search"
+    assert payload["context"]["latest_execution"]["resolved_app_id"] == "browser"
+    assert payload["context"]["loop_steps"][0]["action_id"] == "browser_search"
+    assert payload["context"]["loop_steps"][0]["opened"] is True
     assert "If one more allowed action is clearly needed" in payload["instructions"]
 
 
