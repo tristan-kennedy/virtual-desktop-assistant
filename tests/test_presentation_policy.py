@@ -56,3 +56,35 @@ def test_busy_note_presentation_uses_alert_style_when_confident_enough() -> None
     assert cue.bubble_style.style_id == "alert"
     assert cue.delivery.queue_policy == "replace"
     assert cue.delivery.reveal_mode == "instant"
+
+
+def test_scene_kind_celebration_prefers_joke_bubble_and_scene_animation() -> None:
+    cue = resolve_turn_presentation(
+        AssistantTurn(dialogue_category="normal", scene_kind="celebration"),
+        emotion=EmotionState(excitement=55),
+    )
+
+    assert cue.scene_kind == "celebration"
+    assert cue.animation_state == "laugh"
+    assert cue.bubble_style.style_id == "joke"
+    assert cue.delivery.hold_ms > 2200
+
+
+def test_scene_kind_idea_prefers_thought_bubble_when_category_is_generic() -> None:
+    cue = resolve_turn_presentation(
+        AssistantTurn(dialogue_category="normal", scene_kind="idea"),
+        emotion=EmotionState(confidence=50),
+    )
+
+    assert cue.scene_kind == "idea"
+    assert cue.animation_state == "surprised"
+    assert cue.bubble_style.style_id == "thought"
+
+
+def test_dialogue_category_remains_primary_over_scene_bubble_choice() -> None:
+    cue = resolve_turn_presentation(
+        AssistantTurn(dialogue_category="alert", scene_kind="celebration"),
+        emotion=EmotionState(excitement=80),
+    )
+
+    assert cue.bubble_style.style_id == "alert"

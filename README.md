@@ -169,7 +169,6 @@ git push origin main
 ## Suggested next additions
 
 - Expand beyond the first desktop-control slice into richer assistant capabilities such as reminders, notes, or deeper app integrations.
-- Add more theatrical scene behaviors and stronger visible routines.
 - Keep improving visual polish, staging, and sprite presentation.
 - Add push-to-talk or STT input.
 - Harden persistence, migrations, and developer observability.

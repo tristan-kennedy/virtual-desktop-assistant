@@ -72,3 +72,27 @@ def test_low_confidence_uses_concerned_expression() -> None:
 
     assert presentation.expression_id == "concerned"
     assert presentation.accent_variant == "wary"
+
+
+def test_scene_kind_celebration_overlays_happy_laugh_pose() -> None:
+    controller = PresentationController()
+
+    controller.set_animation_state("talk")
+    controller.set_scene_kind("celebration")
+    presentation = controller.resolve()
+
+    assert presentation.pose_id == "laugh"
+    assert presentation.expression_id == "happy"
+    assert "spark" in presentation.active_effects
+
+
+def test_scene_kind_panic_overlays_concerned_surprised_pose() -> None:
+    controller = PresentationController()
+
+    controller.set_animation_state("idle")
+    controller.set_scene_kind("panic")
+    presentation = controller.resolve()
+
+    assert presentation.pose_id == "surprised"
+    assert presentation.expression_id == "concerned"
+    assert "sweat" in presentation.active_effects

@@ -5,6 +5,7 @@ from ..core.dialogue import normalize_dialogue_category
 from ..core.emotion import EmotionState, sanitize_emotion_payload
 from ..core.memory import sanitize_memory_updates
 from ..core.controller_models import AssistantTurn
+from ..core.scenes import normalize_scene_kind
 from .prompt_builder import ALLOWED_ANIMATIONS
 
 ALLOWED_BEHAVIORS = {
@@ -37,6 +38,7 @@ def parse_assistant_turn(
     dialogue_category = normalize_dialogue_category(
         parsed.get("dialogue_category"), fallback="normal"
     )
+    scene_kind = normalize_scene_kind(parsed.get("scene_kind"))
 
     behavior = str(parsed.get("behavior", "")).strip().lower()
     if behavior not in ALLOWED_BEHAVIORS:
@@ -60,6 +62,7 @@ def parse_assistant_turn(
         say=say,
         animation=animation,
         dialogue_category=dialogue_category,
+        scene_kind=scene_kind,
         action=action,
         memory_updates=memory_updates,
         emotion=emotion,

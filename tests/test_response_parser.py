@@ -119,3 +119,25 @@ def test_parse_assistant_turn_drops_invalid_desktop_action_args() -> None:
     )
 
     assert turn.action is None
+
+
+def test_parse_assistant_turn_drops_invalid_scene_kind() -> None:
+    turn = parse_assistant_turn(
+        {
+            "say": "A strange beat.",
+            "scene_kind": "grand-finale",
+        }
+    )
+
+    assert turn.scene_kind == ""
+
+
+def test_parse_assistant_turn_keeps_valid_scene_kind() -> None:
+    turn = parse_assistant_turn(
+        {
+            "say": "Curtains up.",
+            "scene_kind": "Entrance",
+        }
+    )
+
+    assert turn.scene_kind == "entrance"

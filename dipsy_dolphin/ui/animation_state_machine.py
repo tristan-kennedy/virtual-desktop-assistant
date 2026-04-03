@@ -17,6 +17,12 @@ class ActiveAnimationState:
 
 
 class AnimationStateMachine:
+    """Owns transient animation_state requests and motion/base-state arbitration.
+
+    This machine does not know about higher-level scene semantics.
+    It only resolves which animation state should currently be active.
+    """
+
     def __init__(self) -> None:
         self._configs: Dict[str, AnimationStateConfig] = {
             "idle": AnimationStateConfig(priority=0, min_hold_ms=0),

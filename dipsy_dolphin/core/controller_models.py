@@ -15,9 +15,17 @@ class ActionRequest:
 
 @dataclass(frozen=True)
 class AssistantTurn:
+    """Structured assistant output before UI presentation resolution.
+
+    `animation` is an optional model-facing animation_state hint.
+    `dialogue_category` classifies the speech/content type.
+    `scene_kind` is optional theatrical framing and is not an animation name.
+    """
+
     say: str = ""
     animation: str = ""
     dialogue_category: str = "normal"
+    scene_kind: str = ""
     action: ActionRequest | None = None
     memory_updates: tuple[MemoryUpdate, ...] = field(default_factory=tuple)
     emotion: EmotionState | None = None

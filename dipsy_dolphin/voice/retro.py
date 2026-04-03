@@ -26,6 +26,16 @@ RETRO_HINT_TOKENS = (
     "lernout",
     "robot",
 )
+BRIGHT_FALLBACK_VOICE_NAMES = (
+    "zira",
+    "hazel",
+    "heera",
+    "eva",
+    "aria",
+    "susan",
+    "linda",
+    "helen",
+)
 
 
 def choose_voice(
@@ -51,8 +61,10 @@ def choose_voice(
     ranked = sorted(voices, key=_retro_score, reverse=True)
     selected = ranked[0]
     used_fallback = _retro_score(selected) < 300
+    if used_fallback:
+        selected = sorted(voices, key=_bright_fallback_score, reverse=True)[0]
     reason = (
-        "Preferred retro voice" if not used_fallback else "Closest available retro-leaning voice"
+        "Preferred retro voice" if not used_fallback else "Brightest available fallback voice"
     )
     return VoiceSelection(option=selected, used_fallback=used_fallback, reason=reason)
 
@@ -64,7 +76,7 @@ def build_retro_ssml(text: str, *, category: str, settings: VoiceSettings) -> st
     pitch = _pitch_value(bounded.pitch)
     return (
         "<speak version='1.0' xml:lang='en-US' xmlns='http://www.w3.org/2001/10/synthesis'>"
-        f"<prosody rate='{rate}' pitch='{pitch}'>"
+        f"<prosody rate='{rate}' pitch='{pitch}' range='{pitch}'>"
         f"{escaped_text}"
         "</prosody>"
         "</speak>"
@@ -137,7 +149,44 @@ def _effective_rate_value(settings: VoiceSettings) -> int:
     return settings.bounded().rate
 
 
+def _bright_fallback_score(voice: VoiceOption) -> int:
+    name = voice.name.strip().lower()
+    description = voice.description.strip().lower()
+    gender = voice.gender.strip().lower()
+    age = voice.age.strip().lower()
+    score = 0
+
+    for preferred_name in BRIGHT_FALLBACK_VOICE_NAMES:
+        if preferred_name in name:
+            score += 260
+        if preferred_name in description:
+            score += 120
+
+    if gender == "female":
+        score += 120
+    elif gender == "male":
+        score -= 20
+
+    if age in {"child", "teen"}:
+        score += 160
+    elif age == "adult":
+        score += 20
+
+    if "desktop" in name:
+        score += 20
+    if voice.culture.lower().startswith("en"):
+        score += 20
+    return score
+
+
 def _pitch_value(pitch: int) -> str:
     bounded = max(-10, min(10, pitch))
-    return f"{bounded:+d}st"
-
+    if bounded >= 7:
+        return "x-high"
+    if bounded >= 3:
+        return "high"
+    if bounded >= -2:
+        return "medium"
+    if bounded >= -6:
+        return "low"
+    return "x-low"

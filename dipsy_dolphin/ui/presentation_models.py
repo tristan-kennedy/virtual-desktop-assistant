@@ -16,6 +16,13 @@ class CharacterBounds:
 
 @dataclass(frozen=True)
 class CharacterPresentation:
+    """Renderer-facing output after presentation resolution.
+
+    `pose_id` is the resolved body pose for the renderer.
+    `expression_id` is the resolved facial expression.
+    Neither field is a model-facing animation request.
+    """
+
     pose_id: str = "idle"
     expression_id: str = "neutral"
     eye_state: str = "open"
@@ -51,7 +58,15 @@ class DialogueDelivery:
 
 @dataclass(frozen=True)
 class ResolvedTurnPresentation:
+    """UI-facing presentation cue derived from a semantic assistant turn.
+
+    `animation_state` is a transient animation request for the state machine.
+    `dialogue_category` remains the speech/content classification.
+    `scene_kind` is optional theatrical framing layered on top of the turn.
+    """
+
     animation_state: str = "talk"
     bubble_style: BubbleStyle = field(default_factory=BubbleStyle)
     dialogue_category: str = "normal"
+    scene_kind: str = ""
     delivery: DialogueDelivery = field(default_factory=DialogueDelivery)

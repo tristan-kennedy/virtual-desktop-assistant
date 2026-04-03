@@ -10,7 +10,7 @@ Use this file as the default implementation order unless the user gives a differ
 - Emotion, inactivity scheduling, richer dialogue presentation, structured memory, and TTS are in place.
 - Structured action execution and a bounded controller loop are in place.
 - The shell is now character plus conversation, without menu-driven controls.
-- The next major gaps are more theatrical routines, stronger visual polish, push-to-talk or STT, persistence hardening, and developer observability.
+- The next major gaps are stronger visual polish, push-to-talk or STT, persistence hardening, and developer observability.
 
 ## Phase map
 
@@ -146,49 +146,72 @@ Use this file as the default implementation order unless the user gives a differ
 - Done when: Dipsy can complete a few useful desktop tasks through chat in a robust, debuggable way.
 - Status: completed through the Windows desktop backend in `dipsy_dolphin/desktop/`, typed action validation in `dipsy_dolphin/actions/registry.py`, executor-backed desktop actions in `dipsy_dolphin/actions/executor.py`, and updated prompt/controller wiring for app launch, focus, URL open, path open, and browser search.
 
-18. Add theatrical scene behaviors
+18. Add theatrical scene behaviors [done]
 
 - Create entrance bits, celebration bits, fake panic, joke routines, and idea moments.
 - Tie them to animation, bubble styles, and future voice effects.
 - Done when: Dipsy has recognizable performative routines beyond basic responses.
+- Status: completed through `dipsy_dolphin/core/scenes.py`, the `scene_kind` turn contract, scene-aware prompt/controller wiring, presentation overlays, dedicated UI routine events, and the new scene-focused tests.
 
 19. Improve visuals in passes
 
 - Pass 1: stronger silhouette, color, facial readability, and bubble polish.
 - Pass 2: layered effects, better motion, better staging, and more expressive reactions.
-- Pass 3: richer sprite structure and stronger pseudo-3D feel if desired.
+- Pass 3: richer sprite structure, stronger depth cues, and more convincing 2D stagecraft.
 - Done when: the character looks intentional and memorable instead of prototype-grade.
 
-20. Plan and execute the 3D milestone
+20. Deepen the 2D performance illusion
 
-- If true 3D remains the goal, define the renderer, asset format, rigging path, and animation import workflow.
-- Build a minimum 3D slice before any full migration.
-- Done when: a small but real 3D Dipsy path exists and is technically proven.
-
-21. Add STT or push-to-talk voice input
-
-- Add push-to-talk first instead of always-listening input.
-- Show clear listening and transcript states before any action is taken.
-- Done when: the user can talk to Dipsy naturally without losing control over what gets executed.
-
-22. Harden persistence and migrations
-
-- Version storage formats for profiles, memory, preferences, and any durable execution state that proves necessary.
-- Add migration logic for future schema changes.
-- Protect against partial writes and corrupted state where practical.
-- Done when: updates can add features without breaking existing user data.
-
-23. Add observability and debug tooling
-
-- Add logs for autonomy triggers, emotion changes, model usage, action execution, failures, and recoveries.
-- Add a lightweight developer view or debug mode.
-- Done when: odd behavior can be traced without guesswork.
-
-24. Keep expanding automated tests with the runtime
-
-- Add coverage for emotion transitions, scheduling, storage, execution, controller loops, and structured LLM output.
-- Focus first on non-UI logic.
-- Done when: the important assistant logic can change safely without regressions.
+- Keep the long-term target as 2D art and animation that feels dimensional through staging, motion, layering, and sprite structure.
+- Define the asset organization and rendering improvements needed for a BonziBuddy-style 2D character that reads as lively and depthful without becoming a real 3D runtime.
+- Build a small proof slice for stronger 2D depth cues before any broader visual overhaul.
+- Runtime asset format:
+  - use transparent `.png` frame sequences for runtime assets, not GIF, video, or real-time 3D formats
+  - keep one `animation.json` beside each animation sequence
+  - keep character-level anchors and supported states in `assets/character/dipsy/manifest.json`
+- Runtime asset layout:
+  - `assets/character/dipsy/manifest.json`
+  - `assets/character/dipsy/poses/<pose_id>/animation.json`
+  - `assets/character/dipsy/poses/<pose_id>/0001.png`, `0002.png`, and so on
+  - `assets/character/dipsy/effects/<effect_id>/0001.png` etc for optional overlay fx loops
+  - `assets/character/dipsy/expressions/` only if we later split face layers from the body; do not block the first sprite pass on layered facial assets
+- Required first animation families to create:
+  - `idle`: subtle bob, blink, tail sway; 6-8 frames loop
+  - `walk`: readable side-step cycle; 8 frames loop
+  - `talk`: speaking loop for normal dialogue; 4-6 frames loop
+  - `think`: small pondering loop; 4-6 frames loop
+  - `laugh`: broader mouth and body bounce; 4-6 frames loop
+  - `surprised`: quick hit plus settle; 3-4 frames
+  - `sad`: lower-energy loop or held settle; 3-4 frames
+  - `excited`: bigger bounce and arm/tail lift; 4-6 frames loop
+  - `loading`: optional short loop for startup/loading if it stays visually distinct from `think`
+- First polish variants after the base set exists:
+  - `idle_bouncy`
+  - `talk_bright`
+  - `laugh_big`
+  - `excited_bounce`
+  - directional variants only if runtime mirroring looks wrong; otherwise author right-facing sprites first and mirror for left
+- File and export rules:
+  - every frame in one animation must use the same canvas size and transparent background
+  - keep feet planted to a stable baseline so current `feet_anchor` logic still makes sense
+  - keep bubble/look anchors consistent with the character root in `manifest.json`
+  - prefer lossless RGBA PNG exports
+  - keep filenames zero-padded and sequential so playback is trivial to implement
+- `animation.json` fields to expect:
+  - `pose_id`
+  - `frame_count`
+  - `fps` or `frame_duration_ms`
+  - `loop`
+  - `hold_on_last_frame_ms`
+  - optional `mirror_safe`
+  - optional `notes` for staging or emotion usage
+- Proof slice to build before a full asset push:
+  - one polished `idle`
+  - one polished `talk`
+  - one polished `excited`
+  - one overlay effect loop like `spark`
+  - renderer support that can load those files from `assets/character/dipsy/poses/` instead of procedural drawing for that slice
+- Done when: Dipsy feels more dimensional and performative on screen while remaining fully 2D in runtime and asset direction.
 
 25. Polish packaging and releases
 
@@ -210,13 +233,13 @@ Use this file as the default implementation order unless the user gives a differ
 
 If work resumes soon, the recommended next build order is:
 
-1. `18` theatrical scene behaviors
-2. `19` visual improvement passes
-3. `21` push-to-talk or STT
-4. `22` persistence hardening
-5. `23` developer observability and debug tooling
-6. `24` test expansion
-7. `25` packaging and release polish
+1. `19` visual improvement passes
+2. `21` push-to-talk or STT
+3. `22` persistence hardening
+4. `23` developer observability and debug tooling
+5. `24` test expansion
+6. `25` packaging and release polish
+7. `26` broader staged computer-action rollout
 
 ## Desktop capability enhancements
 

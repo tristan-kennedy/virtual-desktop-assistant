@@ -39,6 +39,7 @@ from ..core.models import SessionState
 from ..storage.memory_store import MemoryStore
 from ..storage.profile_store import ProfileStore
 from ..voice.models import SpeechEvent, SpeechRequest
+from ..voice.models import DEFAULT_VOICE_PITCH, DEFAULT_VOICE_RATE, DEFAULT_VOICE_VOLUME
 from ..voice.retro import estimate_retro_speech_duration_ms, estimate_retro_talk_pulse_ms
 from ..voice.service import VoiceService
 from .animation_state_machine import AnimationStateMachine
@@ -211,6 +212,7 @@ class AssistantApp(QWidget):
         self._pending_request: PendingControllerRequest | None = None
         self._request_counter = 0
         self.current_dialogue_category: Optional[str] = None
+        self.current_scene_kind: str = ""
         self._active_interactions: set[str] = set()
         self._quit_after_dialogue = False
         self._active_voice_utterances: set[str] = set()
@@ -236,6 +238,9 @@ class AssistantApp(QWidget):
         self.bubble_hide_timer = QTimer(self)
         self.bubble_hide_timer.setSingleShot(True)
         self.bubble_hide_timer.timeout.connect(self._on_bubble_timeout)
+        self.scene_overlay_timer = QTimer(self)
+        self.scene_overlay_timer.setSingleShot(True)
+        self.scene_overlay_timer.timeout.connect(self._clear_scene_overlay)
         self.dialogue_reveal_timer = QTimer(self)
         self.dialogue_reveal_timer.setSingleShot(True)
         self.dialogue_reveal_timer.timeout.connect(self._on_dialogue_reveal_timeout)
@@ -303,6 +308,23 @@ class AssistantApp(QWidget):
 
     def _load_session_state(self) -> SessionState:
         profile = self.profile_store.load_profile()
+        voice_migrated = False
+        if (
+            profile.voice.profile == "retro_classic"
+            and profile.voice.voice_id == ""
+            and profile.voice.rate == DEFAULT_VOICE_RATE
+            and profile.voice.volume == DEFAULT_VOICE_VOLUME
+            and profile.voice.pitch in {-1, 4}
+        ):
+            voice_migrated = True
+            profile.voice = profile.voice.__class__(
+                enabled=profile.voice.enabled,
+                profile=profile.voice.profile,
+                voice_id=profile.voice.voice_id,
+                rate=profile.voice.rate,
+                volume=profile.voice.volume,
+                pitch=DEFAULT_VOICE_PITCH,
+            )
         memory = self.memory_store.load_memory()
         migrated_memory, migrated = migrate_legacy_profile_identity(
             memory,
@@ -313,6 +335,7 @@ class AssistantApp(QWidget):
         session = SessionState(profile=profile, memory=migrated_memory)
         if migrated:
             self.memory_store.save_memory(session.memory)
+        if migrated or voice_migrated:
             self.profile_store.save_profile(session.profile)
         return session
 
@@ -489,6 +512,7 @@ class AssistantApp(QWidget):
         )
         self.presentation_controller.set_facing(self.animation_state_machine.facing)
         self.presentation_controller.set_dialogue_category(self.current_dialogue_category)
+        self.presentation_controller.set_scene_kind(self.current_scene_kind)
         self.presentation_controller.set_emotion(self.session.emotion)
         self.character_widget.set_presentation(self.presentation_controller.resolve())
 
@@ -728,6 +752,7 @@ class AssistantApp(QWidget):
             "apply turn: "
             f"say={turn.say!r} "
             f"animation={turn.animation} "
+            f"scene_kind={turn.scene_kind or None} "
             f"action={getattr(turn.action, 'action_id', None)} "
             f"execution_status={getattr(last_execution_result, 'status', None)} "
             f"directives={directive_kinds or [None]} "
@@ -745,8 +770,11 @@ class AssistantApp(QWidget):
         if turn.say:
             self._speak(turn.say, cue=cue)
         elif cue.animation_state not in {"idle", "walk"}:
+            self.current_scene_kind = cue.scene_kind
+            self.scene_overlay_timer.start(1800)
             self._request_animation(cue.animation_state, duration_ms=1800, force=True)
         else:
+            self._clear_scene_overlay()
             self._sync_presentation_to_motion()
 
         if schedule_idle:
@@ -922,9 +950,7 @@ class AssistantApp(QWidget):
         self._note_user_interaction()
         submitted = self._submit_controller_task(
             "joke",
-            lambda session=copy.deepcopy(self.session): self.controller.handle_user_message(
-                "Tell me a joke.", session
-            ),
+            lambda session=copy.deepcopy(self.session): self.controller.joke_turn(session),
             lambda result: self._perform_controller_result(result, schedule_idle=True),
         )
         if not submitted:
@@ -934,9 +960,7 @@ class AssistantApp(QWidget):
         self._note_user_interaction()
         submitted = self._submit_controller_task(
             "do something",
-            lambda session=copy.deepcopy(self.session): self.controller.handle_user_message(
-                "Do something playful and visible.", session
-            ),
+            lambda session=copy.deepcopy(self.session): self.controller.do_something_turn(session),
             lambda result: self._perform_controller_result(result, schedule_idle=True),
         )
         if not submitted:
@@ -946,9 +970,7 @@ class AssistantApp(QWidget):
         self._note_user_interaction()
         submitted = self._submit_controller_task(
             "status",
-            lambda session=copy.deepcopy(self.session): self.controller.handle_user_message(
-                "What's our current status?", session
-            ),
+            lambda session=copy.deepcopy(self.session): self.controller.status_turn(session),
             lambda result: self._perform_controller_result(result, schedule_idle=True),
         )
         if not submitted:
@@ -1142,6 +1164,7 @@ class AssistantApp(QWidget):
     def _clear_dialogue_state(self, *, stop_voice: bool = False) -> None:
         self.dialogue_reveal_timer.stop()
         self.bubble_hide_timer.stop()
+        self.scene_overlay_timer.stop()
         self.dialogue_presenter.clear()
         self._pending_voice_requests.clear()
         self._started_voice_requests.clear()
@@ -1150,18 +1173,21 @@ class AssistantApp(QWidget):
             self.voice_service.stop(clear_queue=True)
         self.bubble_window.hide()
         self.current_dialogue_category = None
+        self.current_scene_kind = ""
 
     def _show_active_dialogue(self) -> None:
         active_item = self.dialogue_presenter.active_item
         if active_item is None:
             self.bubble_window.hide()
             self.current_dialogue_category = None
+            self.current_scene_kind = ""
             self._clear_animation_overlay()
             self._sync_presentation_to_motion()
             return
 
         cue = active_item.cue
         self.current_dialogue_category = cue.dialogue_category
+        self.current_scene_kind = cue.scene_kind
         active_animation = cue.animation_state
         if active_animation in {"idle", "walk"}:
             active_animation = "talk"
@@ -1255,6 +1281,12 @@ class AssistantApp(QWidget):
             return
         if action in {"start", "replace"}:
             self._show_active_dialogue()
+
+    def _clear_scene_overlay(self) -> None:
+        self.scene_overlay_timer.stop()
+        self.current_scene_kind = ""
+        if self.dialogue_presenter.active_item is None:
+            self._apply_presentation()
 
     def _position_bubble(self) -> None:
         self.bubble_window.ensurePolished()

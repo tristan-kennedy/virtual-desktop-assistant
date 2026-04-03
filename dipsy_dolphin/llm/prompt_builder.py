@@ -6,6 +6,7 @@ from ..core.dialogue import DIALOGUE_CATEGORIES
 from ..core.emotion import EmotionState
 from ..core.memory import MEMORY_SECTIONS, WRITABLE_MEMORY_SECTIONS, summarize_memory
 from ..core.models import SessionState
+from ..core.scenes import SCENE_KINDS, SceneOpportunity
 from ..desktop.catalog import app_catalog_prompt_payload
 
 
@@ -25,6 +26,8 @@ def build_system_prompt() -> str:
     contract = {
         "say": "string; required for startup, onboarding, chat, joke, status, reset; optional for inactivity ticks",
         "dialogue_category": list(DIALOGUE_CATEGORIES),
+        "scene_kind": list(SCENE_KINDS)
+        + [""],
         "animation": "optional visible hint; use one of " + ", ".join(ALLOWED_ANIMATIONS),
         "action": {
             "action_id": list(allowed_action_names()),
@@ -64,6 +67,7 @@ def build_system_prompt() -> str:
             "output": {
                 "say": "<one short direct reply>",
                 "dialogue_category": "normal",
+                "scene_kind": "",
                 "animation": "talk",
                 "action": None,
                 "memory_updates": [
@@ -85,6 +89,7 @@ def build_system_prompt() -> str:
             "output": {
                 "say": "<one short goodbye line>",
                 "dialogue_category": "normal",
+                "scene_kind": "",
                 "animation": "talk",
                 "action": {"action_id": "quit_app", "args": {}},
                 "memory_updates": [],
@@ -100,6 +105,7 @@ def build_system_prompt() -> str:
             "output": {
                 "say": "",
                 "dialogue_category": "thought",
+                "scene_kind": "idea",
                 "animation": "idle",
                 "action": None,
                 "memory_updates": [],
@@ -115,6 +121,7 @@ def build_system_prompt() -> str:
             "output": {
                 "say": "<short follow-up that reacts to the real function result>",
                 "dialogue_category": "normal",
+                "scene_kind": "celebration",
                 "animation": "talk",
                 "action": {"action_id": "browser_search", "args": {"query": "weather today"}},
                 "memory_updates": [],
@@ -130,6 +137,7 @@ def build_system_prompt() -> str:
             "output": {
                 "say": "I can bring that onstage.",
                 "dialogue_category": "normal",
+                "scene_kind": "idea",
                 "animation": "excited",
                 "action": {"action_id": "focus_or_open_app", "args": {"app_id": "notepad"}},
                 "memory_updates": [],
@@ -154,6 +162,7 @@ def build_system_prompt() -> str:
             "The provided emotion object is Dipsy's real current feeling state. Let it shape wording, animation, and initiative.",
             "Always return a complete emotion object that reflects how Dipsy feels after this turn. Keep changes gradual unless something notable happened.",
             "Always return exactly one dialogue_category. Use animation only when a stronger visible cue helps.",
+            "scene_kind is optional theatrical framing for this beat. It is not choreography, not a script, and not a replacement for dialogue_category.",
             "The think animation is reserved for the UI while waiting on the local model. Never return think yourself.",
             "Chat is the main way the user should ask for jokes, movement, status, and other supported routines.",
             "App-level actions also happen through chat. If the user clearly asks Dipsy to leave, close, quit, or go away now, you may use quit_app.",
@@ -167,6 +176,9 @@ def build_system_prompt() -> str:
             "During inactivity, prioritize variety across beats instead of repeating one pattern.",
             "Do not default to leading questions about interests or repeatedly probe the user for more facts during inactivity.",
             "Use recent_autonomous_behaviors, recent_turns, and the current emotion state to vary between silence, quips, jokes, visible emotes, and allowed actions when appropriate.",
+            "If scene_context is present, use it as soft stage framing only. You may still leave scene_kind empty when no theatrical beat is warranted.",
+            "Avoid repeating recent scene kinds unless the current event strongly warrants it.",
+            "A few silent idle beats are fine, but if consecutive_silent_autonomous_turns is already high, prefer a tiny spoken beat unless that would feel spammy.",
             "Longer quiet stretches are good. After a noticeable beat, you may return a much longer cooldown_ms to let the desktop stay calm.",
             "If a user asks for something that matches an allowed action, decide yourself whether to answer directly, use an action, or do both.",
             "On direct user chat only, you may return memory_updates when the user reveals something worth remembering or correcting later.",
@@ -186,6 +198,7 @@ def build_user_prompt(
     state: SessionState,
     user_text: str = "",
     context: dict[str, Any] | None = None,
+    scene_context: SceneOpportunity | None = None,
 ) -> str:
     recent_turns = [{"role": turn.role, "content": turn.content} for turn in state.turns[-8:]]
     memory_snapshot = summarize_memory(state.memory)
@@ -202,17 +215,23 @@ def build_user_prompt(
         "onboarding_complete": state.onboarding_complete,
         "autonomous_chats": state.autonomous_chats,
         "autonomous_beats": state.autonomous_beats,
+        "consecutive_silent_autonomous_turns": state.consecutive_silent_autonomous_turns,
         "last_user_interaction_ms": state.last_user_interaction_ms,
         "last_autonomous_behavior": state.last_autonomous_behavior,
         "recent_autonomous_behaviors": state.recent_autonomous_behaviors,
         "last_topic": state.last_topic,
         "last_assistant_line": state.last_assistant_line,
+        "last_scene_kind": state.last_scene_kind,
+        "recent_scene_kinds": state.recent_scene_kinds,
         "emotion": state.emotion.to_prompt_payload(),
         "emotion_summary": state.emotion.summary(),
         "conversation_summary": _session_summary(state),
         "recent_turns": recent_turns,
         "user_text": user_text,
         "context": context or {},
+        "scene_context": (
+            scene_context.to_prompt_payload() if scene_context is not None else {}
+        ),
         "instructions": _event_instructions(event, context),
     }
     return json.dumps(payload, indent=2)
@@ -234,6 +253,8 @@ def _session_summary(state: SessionState) -> str:
         )
     if state.last_topic:
         parts.append(f"Most recent topic: {state.last_topic}.")
+    if state.last_scene_kind:
+        parts.append(f"Most recent scene kind: {state.last_scene_kind}.")
     if state.last_assistant_line:
         parts.append(f"Last Dipsy line: {state.last_assistant_line}")
     parts.append(f"Current emotion: {state.emotion.summary()}.")
@@ -278,7 +299,7 @@ def _event_instructions(event: str, context: dict[str, Any] | None = None) -> st
             f"Seconds since user interaction: {seconds_since_user or 'unknown'}. "
             f"Current inactivity cooldown remaining before this tick fired: {cooldown_remaining or '0'} ms. "
             "Prioritize diversity across beats and avoid repeatedly steering back to the user's interests unless there is a strong reason in the recent context. "
-            "It is often better to stay silent, give a tiny quip, tell a small joke, or do a visible action than to ask another leading question. "
+            "Early quiet beats may stay silent, but after multiple silent autonomous beats it is better to give a tiny spoken quip, joke, or idea moment than to keep disappearing. "
             "Longer cooldowns are fine after a bigger beat. "
             "Keep the beat bounded and visible if you choose to do something. "
             "Do not use the think animation; the UI owns that while waiting for model output."

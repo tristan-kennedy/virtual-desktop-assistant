@@ -1,16 +1,16 @@
 {
   "character_id": "dipsy",
-  "style_variant": "flat-retro",
+  "style_variant": "rendered-sprite-idle",
   "future_style_variant": "faux-3d",
   "fallback_draw_mode": "vector",
   "canvas_size": {
-    "width": 200,
-    "height": 220
+    "width": 400,
+    "height": 440
   },
   "anchors": {
-    "bubble": [104, 40],
-    "feet": [104, 194],
-    "look": [104, 74]
+    "bubble": [208, 80],
+    "feet": [208, 388],
+    "look": [208, 148]
   },
   "layer_order": [
     "shadow",
@@ -30,7 +30,7 @@
     "effects": ["question", "spark", "sweat", "loading"]
   },
   "notes": {
-    "current_pass": "Flat stylized vector fallback to prove the presentation layer.",
-    "future_direction": "Swap layer slots to faux-3d-friendly sprite sequences without changing semantic state names."
+    "current_pass": "Temporary sprite runtime path: always play the exported idle PNG sequence and ignore semantic pose or emotion rendering.",
+    "future_direction": "Restore semantic state-driven animation selection once more exported sprite sets exist."
   }
 }

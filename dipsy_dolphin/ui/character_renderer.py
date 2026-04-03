@@ -1,195 +1,102 @@
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
+from pathlib import Path
+
+from PySide6.QtCore import QPoint, QRect
+from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
 from .asset_manifest import CharacterAssetManifest
 from .presentation_models import CharacterPresentation
+
+SPRITE_SCALE = 2
 
 
 class CharacterRenderer:
     def __init__(self, manifest: CharacterAssetManifest) -> None:
         self.manifest = manifest
+        self._idle_frames = self._load_idle_frames()
+        self._visible_idle_bounds = self._compute_visible_bounds()
 
-    def paint(self, painter: QPainter, presentation: CharacterPresentation) -> None:
-        painter.setRenderHint(QPainter.Antialiasing, True)
-        bob = presentation.bob_offset
-
-        self._draw_shadow(painter, bob, presentation)
-        self._draw_body_layers(painter, bob, presentation)
-        self._draw_face(painter, bob, presentation)
-        self._draw_badge(painter, bob, presentation)
-        self._draw_effects(painter, bob, presentation)
-
-    def _draw_shadow(
-        self, painter: QPainter, bob: int, presentation: CharacterPresentation
+    def paint(
+        self, painter: QPainter, presentation: CharacterPresentation, *, frame_index: int = 0
     ) -> None:
-        shadow_width = 126 if presentation.pose_id == "walk" else 120
-        shadow_height = 18 if presentation.pose_id == "walk" else 20
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#091014"))
-        painter.drawEllipse(
-            QRectF(104 - shadow_width / 2, 196 + abs(bob) * 0.3, shadow_width, shadow_height)
-        )
-
-    def _draw_body_layers(
-        self, painter: QPainter, bob: int, presentation: CharacterPresentation
-    ) -> None:
-        facing_shift = -5 if presentation.facing == "left" else 5
-        walk_shift = 3 if presentation.pose_id == "walk" and presentation.facing == "right" else 0
-        walk_shift = (
-            -3 if presentation.pose_id == "walk" and presentation.facing == "left" else walk_shift
-        )
-        lean_x = facing_shift + walk_shift
-
-        painter.save()
-        painter.translate(lean_x * 0.35, bob)
-
-        outline_pen = QPen(QColor("#1F5874"), 3)
-        painter.setPen(outline_pen)
-
-        painter.setBrush(QColor("#5EAED1"))
-        painter.drawPolygon(
-            QPolygonF(
-                [
-                    QPointF(48, 120),
-                    QPointF(28, 96),
-                    QPointF(44, 138),
-                ]
-            )
-        )
-
-        tail_points = [
-            QPointF(138, 154),
-            QPointF(162 + facing_shift, 182),
-            QPointF(118, 170),
-        ]
-        painter.setBrush(QColor("#4F9BBC"))
-        painter.drawPolygon(QPolygonF(tail_points))
-
-        painter.setBrush(QColor("#5EAED1"))
-        painter.drawEllipse(QRectF(42, 62, 124, 128))
-
-        painter.setBrush(QColor("#86D4F0"))
-        painter.drawEllipse(QRectF(74, 42, 76, 68))
-
-        painter.setBrush(QColor("#9BE3FA"))
-        painter.drawPolygon(QPolygonF([QPointF(106, 70), QPointF(120, 34), QPointF(132, 76)]))
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#C7F3FF"))
-        painter.drawEllipse(QRectF(64, 94, 74, 74))
-        painter.restore()
-
-    def _draw_face(self, painter: QPainter, bob: int, presentation: CharacterPresentation) -> None:
-        face_y = bob - 1
-        brow_pen = QPen(QColor("#113246"), 2)
-        face_pen = QPen(QColor("#103248"), 2)
-        pupil_shift = -2 if presentation.facing == "left" else 2
-
-        painter.save()
-        painter.translate(0, face_y)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor("#F8FBFD"))
-        painter.drawEllipse(QRectF(82, 66, 15, 15))
-        painter.drawEllipse(QRectF(114, 66, 15, 15))
-
-        painter.setBrush(QColor("#17191A"))
-        if presentation.eye_state == "blink":
-            painter.setPen(face_pen)
-            painter.drawLine(83, 74, 96, 74)
-            painter.drawLine(115, 74, 128, 74)
-            painter.setPen(Qt.NoPen)
-        else:
-            painter.drawEllipse(QRectF(87 + pupil_shift, 70, 6, 6))
-            painter.drawEllipse(QRectF(119 + pupil_shift, 70, 6, 6))
-
-        painter.setPen(brow_pen)
-        if presentation.expression_id == "happy":
-            painter.drawLine(82, 63, 95, 67)
-            painter.drawLine(116, 67, 129, 63)
-        elif presentation.expression_id == "concerned":
-            painter.drawLine(82, 67, 96, 63)
-            painter.drawLine(116, 63, 129, 67)
-        else:
-            painter.drawLine(82, 64, 95, 64)
-            painter.drawLine(116, 64, 129, 64)
-
-        self._draw_mouth(painter, presentation)
-        painter.restore()
-
-    def _draw_mouth(self, painter: QPainter, presentation: CharacterPresentation) -> None:
-        mouth_pen = QPen(QColor("#102226"), 2)
-        painter.setPen(mouth_pen)
-        painter.setBrush(Qt.NoBrush)
-
-        if presentation.mouth_state == "talk_open":
-            painter.setBrush(QColor("#163847"))
-            painter.drawEllipse(QRectF(95, 87, 22, 14))
-            painter.setBrush(QColor("#F5A4B8"))
-            painter.drawEllipse(QRectF(99, 95, 14, 4))
+        del presentation
+        if not self._idle_frames:
             return
 
-        if presentation.expression_id == "happy":
-            painter.drawArc(QRectF(90, 82, 30, 26), 205 * 16, -145 * 16)
-        elif presentation.expression_id == "concerned":
-            painter.drawArc(QRectF(92, 92, 24, 12), 25 * 16, 130 * 16)
-        else:
-            painter.drawArc(QRectF(92, 84, 28, 18), 195 * 16, -120 * 16)
+        frame = self._idle_frames[frame_index % len(self._idle_frames)]
+        frame_rect = self._target_rect_for_frame(frame)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        painter.drawPixmap(frame_rect, frame)
 
-    def _draw_badge(self, painter: QPainter, bob: int, presentation: CharacterPresentation) -> None:
-        accent_colors = {
-            "calm": QColor("#D7F1FF"),
-            "warm": QColor("#FFD56A"),
-            "friendly": QColor("#9FE7C3"),
-            "wary": QColor("#F7C7A8"),
-            "sleepy": QColor("#BFD8E6"),
-            "restless": QColor("#AEE5D8"),
-        }
-        painter.save()
-        painter.translate(0, bob)
-        painter.setPen(QPen(QColor("#103248"), 1))
-        painter.setBrush(
-            accent_colors.get(
-                getattr(presentation, "accent_variant", "calm"), accent_colors["calm"]
-            )
+    def has_frames(self) -> bool:
+        return bool(self._idle_frames)
+
+    def frame_count(self) -> int:
+        return len(self._idle_frames)
+
+    def bubble_anchor(self) -> tuple[int, int]:
+        if self._visible_idle_bounds is None:
+            return self.manifest.bounds.bubble_anchor
+
+        headroom = max(24, min(48, self._visible_idle_bounds.height() // 5))
+        return self._visible_idle_bounds.center().x(), self._visible_idle_bounds.top() + headroom
+
+    def _load_idle_frames(self) -> list[QPixmap]:
+        frames_dir = (
+            Path(__file__).resolve().parents[2]
+            / "assets"
+            / "character"
+            / self.manifest.character_id
+            / "poses"
+            / "idle"
         )
-        painter.drawRoundedRect(QRectF(68, 116, 72, 18), 8, 8)
-        painter.setPen(QColor("#103248"))
-        painter.setFont(QFont("Franklin Gothic Medium", 10, QFont.Bold))
-        painter.drawText(QRectF(64, 116, 80, 20), Qt.AlignCenter, "DIPSY")
-        painter.restore()
+        if not frames_dir.exists():
+            return []
 
-    def _draw_effects(
-        self, painter: QPainter, bob: int, presentation: CharacterPresentation
-    ) -> None:
-        if not presentation.active_effects:
-            return
+        frames: list[QPixmap] = []
+        for frame_path in sorted(frames_dir.glob("*.png")):
+            pixmap = QPixmap(str(frame_path))
+            if not pixmap.isNull():
+                frames.append(pixmap)
+        return frames
 
-        painter.save()
-        painter.translate(0, bob)
-        for effect in presentation.active_effects:
-            if effect == "question":
-                painter.setPen(QPen(QColor("#163847"), 3))
-                painter.setFont(QFont("Franklin Gothic Heavy", 18, QFont.Bold))
-                painter.drawText(QRectF(145, 24, 24, 28), Qt.AlignCenter, "?")
-                painter.setBrush(QColor("#163847"))
-                painter.setPen(Qt.NoPen)
-                painter.drawEllipse(QRectF(153, 49, 4, 4))
-            elif effect == "spark":
-                painter.setPen(QPen(QColor("#FFD56A"), 3))
-                painter.drawLine(148, 34, 160, 34)
-                painter.drawLine(154, 28, 154, 40)
-                painter.drawLine(149, 29, 159, 39)
-                painter.drawLine(149, 39, 159, 29)
-            elif effect == "sweat":
-                painter.setPen(QPen(QColor("#8DD9F8"), 2))
-                painter.setBrush(QColor("#8DD9F8"))
-                painter.drawEllipse(QRectF(138, 56, 8, 12))
-            elif effect == "loading":
-                painter.setPen(Qt.NoPen)
-                loading_colors = (QColor("#9FE7C3"), QColor("#FFD56A"), QColor("#8DD9F8"))
-                x_positions = (142, 154, 166)
-                for index, x_pos in enumerate(x_positions):
-                    painter.setBrush(loading_colors[index])
-                    y_offset = (-4, 0, -2)[index]
-                    painter.drawEllipse(QRectF(x_pos, 28 + y_offset, 8, 8))
-        painter.restore()
+    def _target_rect_for_frame(self, frame: QPixmap) -> QRect:
+        scaled_width = frame.width() * SPRITE_SCALE
+        scaled_height = frame.height() * SPRITE_SCALE
+        feet_x, feet_y = self.manifest.bounds.feet_anchor
+        top_left = QPoint(feet_x - scaled_width // 2, feet_y - scaled_height)
+        return QRect(top_left.x(), top_left.y(), scaled_width, scaled_height)
+
+    def _compute_visible_bounds(self) -> QRect | None:
+        if not self._idle_frames:
+            return None
+
+        frame = self._idle_frames[0]
+        frame_rect = self._target_rect_for_frame(frame)
+        opaque_rect = self._opaque_bounds(frame.toImage())
+        if opaque_rect is None:
+            return frame_rect
+
+        scaled_left = frame_rect.left() + (opaque_rect.left() * SPRITE_SCALE)
+        scaled_top = frame_rect.top() + (opaque_rect.top() * SPRITE_SCALE)
+        scaled_width = opaque_rect.width() * SPRITE_SCALE
+        scaled_height = opaque_rect.height() * SPRITE_SCALE
+        return QRect(scaled_left, scaled_top, scaled_width, scaled_height)
+
+    def _opaque_bounds(self, image: QImage) -> QRect | None:
+        min_x = image.width()
+        min_y = image.height()
+        max_x = -1
+        max_y = -1
+
+        for y in range(image.height()):
+            for x in range(image.width()):
+                if QColor(image.pixel(x, y)).alpha() <= 0:
+                    continue
+                min_x = min(min_x, x)
+                min_y = min(min_y, y)
+                max_x = max(max_x, x)
+                max_y = max(max_y, y)
+
+        if max_x < min_x or max_y < min_y:
+            return None
+        return QRect(min_x, min_y, (max_x - min_x) + 1, (max_y - min_y) + 1)

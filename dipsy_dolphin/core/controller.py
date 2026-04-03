@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import replace
+import time
 from typing import Any, Protocol
 
 from ..actions.executor import ActionExecutor, ActionExecutorProtocol
@@ -19,6 +20,7 @@ from .controller_models import (
 from .emotion import EmotionState
 from .memory import apply_memory_updates
 from .models import SessionState
+from .scenes import plan_scene_opportunity
 
 
 MAX_SPOKEN_CHARACTERS = 1200
@@ -252,11 +254,17 @@ class AssistantController:
         for step_index in range(1, MAX_MODEL_PASSES + 1):
             is_initial_pass = step_index == 1
             try:
+                scene_context = plan_scene_opportunity(
+                    request_event,
+                    working_state,
+                    context=request_context,
+                )
                 turn = self._request_and_apply_turn(
                     event=request_event,
                     state=working_state,
                     user_text=user_text,
                     context=request_context,
+                    scene_context=scene_context,
                     defaults=defaults,
                     required_speech=False if is_initial_pass else required_speech,
                     required_visible=False if is_initial_pass else required_visible,
@@ -336,11 +344,16 @@ class AssistantController:
             )
             if final_turn.say:
                 working_state.autonomous_chats += 1
+                working_state.consecutive_silent_autonomous_turns = 0
+            else:
+                working_state.consecutive_silent_autonomous_turns += 1
         if event == "chat" and final_turn.memory_updates:
             working_state.memory = apply_memory_updates(working_state.memory, final_turn.memory_updates)
         if final_turn.emotion is not None:
             working_state.emotion = final_turn.emotion
         working_state.last_topic = final_turn.topic or working_state.last_topic
+        if final_turn.scene_kind:
+            working_state.remember_scene_kind(final_turn.scene_kind, self._now_ms())
         working_state.autonomy_cooldown_ms = final_turn.cooldown_ms
         return ControllerResult(
             turn=final_turn,
@@ -357,6 +370,7 @@ class AssistantController:
         state: SessionState,
         user_text: str,
         context: dict[str, object] | None,
+        scene_context: Any,
         defaults: AssistantTurn,
         required_speech: bool,
         required_visible: bool,
@@ -364,7 +378,13 @@ class AssistantController:
         memory_updates_enabled: bool,
     ) -> AssistantTurn:
         system_prompt = build_system_prompt()
-        user_prompt = build_user_prompt(event, state, user_text, context=context)
+        user_prompt = build_user_prompt(
+            event,
+            state,
+            user_text,
+            context=context,
+            scene_context=scene_context,
+        )
 
         try:
             parsed_turn = self._request_turn(
@@ -411,6 +431,7 @@ class AssistantController:
             say=parsed_turn.say.strip(),
             animation=parsed_turn.animation or defaults.animation,
             dialogue_category=parsed_turn.dialogue_category or defaults.dialogue_category,
+            scene_kind=parsed_turn.scene_kind or defaults.scene_kind,
             memory_updates=parsed_turn.memory_updates if memory_updates_enabled else (),
             emotion=parsed_turn.emotion or defaults.emotion,
             cooldown_ms=max(
@@ -485,7 +506,13 @@ class AssistantController:
     ) -> dict[str, object]:
         if execution_result is None:
             return {}
-        return dict(execution_result.observation)
+        payload = dict(execution_result.observation)
+        payload.setdefault("action_id", execution_result.action_id)
+        payload.setdefault("status", execution_result.status)
+        payload.setdefault("message", execution_result.message)
+        if execution_result.directive is not None:
+            payload.setdefault("directive_kind", execution_result.directive.kind)
+        return payload
 
     def _serialize_loop_step(self, step: ControllerLoopStep) -> dict[str, object]:
         observation = (
@@ -593,3 +620,6 @@ class AssistantController:
             "Current issue: "
             f"{getattr(self.provider.status, 'reason', '') or 'local brain unavailable'}"
         )
+
+    def _now_ms(self) -> int:
+        return time.monotonic_ns() // 1_000_000

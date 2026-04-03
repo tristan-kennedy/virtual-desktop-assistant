@@ -3,6 +3,7 @@ import json
 from dipsy_dolphin.core.emotion import EmotionState
 from dipsy_dolphin.core.memory import AssistantMemory, MemoryEntry
 from dipsy_dolphin.core.models import SessionState
+from dipsy_dolphin.core.scenes import SceneOpportunity
 from dipsy_dolphin.llm.prompt_builder import build_system_prompt, build_user_prompt
 
 
@@ -19,6 +20,7 @@ def test_system_prompt_avoids_literal_stock_example_lines() -> None:
     assert "Never return think yourself" in prompt
     assert "Do not default to leading questions about interests" in prompt
     assert "Longer quiet stretches are good" in prompt
+    assert "consecutive_silent_autonomous_turns" in prompt
     assert "quit_app" in prompt
     assert "Do not use quit_app for casual sign-offs" in prompt
     assert "focus_or_open_app" in prompt
@@ -28,6 +30,7 @@ def test_system_prompt_avoids_literal_stock_example_lines() -> None:
     assert "Never invent shell commands" in prompt
     assert '"emotion"' in prompt
     assert '"dialogue_category"' in prompt
+    assert '"scene_kind"' in prompt
     assert '"memory_updates"' in prompt
     assert "4000-120000" in prompt
 
@@ -119,6 +122,7 @@ def test_action_result_prompt_includes_latest_execution_and_loop_trace() -> None
     assert payload["context"]["latest_execution"]["resolved_app_id"] == "browser"
     assert payload["context"]["loop_steps"][0]["action_id"] == "browser_search"
     assert payload["context"]["loop_steps"][0]["opened"] is True
+    assert payload["scene_context"] == {}
     assert "If one more allowed action is clearly needed" in payload["instructions"]
 
 
@@ -137,12 +141,36 @@ def test_inactive_tick_prompt_uses_timing_context_without_behavior_hints() -> No
     )
 
     assert payload["event"] == "inactive_tick"
+    assert payload["consecutive_silent_autonomous_turns"] == 0
     assert payload["context"]["seconds_since_user_interaction"] == 42
     assert payload["context"]["cooldown_remaining_ms"] == 0
     assert "Decide whether to stay silent, speak briefly, or use one allowed action" in payload[
         "instructions"
     ]
     assert "avoid repeatedly steering back to the user's interests" in payload["instructions"]
+    assert "after multiple silent autonomous beats" in payload["instructions"]
     assert "Longer cooldowns are fine after a bigger beat" in payload["instructions"]
     assert "Preferred mode for this turn" not in payload["instructions"]
     assert "Allowed behaviors for this turn" not in payload["instructions"]
+
+
+def test_user_prompt_includes_scene_context_payload() -> None:
+    state = SessionState()
+
+    payload = json.loads(
+        build_user_prompt(
+            "startup",
+            state,
+            scene_context=SceneOpportunity(
+                allowed_scene_kinds=("entrance", "idea"),
+                recommended_scene_kind="entrance",
+                reason="startup_presence",
+                recent_scene_kinds=("joke",),
+            ),
+        )
+    )
+
+    assert payload["scene_context"]["allowed_scene_kinds"] == ["entrance", "idea"]
+    assert payload["scene_context"]["recommended_scene_kind"] == "entrance"
+    assert payload["scene_context"]["reason"] == "startup_presence"
+    assert payload["scene_context"]["recent_scene_kinds"] == ["joke"]

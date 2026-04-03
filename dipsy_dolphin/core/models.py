@@ -62,10 +62,14 @@ class SessionState:
     last_user_interaction_ms: int = 0
     autonomous_chats: int = 0
     autonomous_beats: int = 0
+    consecutive_silent_autonomous_turns: int = 0
     last_autonomous_behavior: str = ""
     recent_autonomous_behaviors: List[str] = field(default_factory=list)
     last_topic: str = ""
     last_assistant_line: str = ""
+    last_scene_kind: str = ""
+    recent_scene_kinds: List[str] = field(default_factory=list)
+    scene_kind_times_ms: dict[str, int] = field(default_factory=dict)
     last_autonomous_at_ms: int = 0
     autonomous_behavior_times_ms: dict[str, int] = field(default_factory=dict)
     autonomy_cooldown_ms: int = 0
@@ -161,6 +165,17 @@ class SessionState:
         clamped_now_ms = max(0, now_ms)
         self.last_autonomous_at_ms = clamped_now_ms
         self.autonomous_behavior_times_ms[cleaned] = clamped_now_ms
+
+    def remember_scene_kind(self, scene_kind: str, now_ms: int) -> None:
+        cleaned = str(scene_kind or "").strip().lower()
+        if not cleaned:
+            return
+        clamped_now_ms = max(0, now_ms)
+        self.last_scene_kind = cleaned
+        self.recent_scene_kinds.append(cleaned)
+        if len(self.recent_scene_kinds) > 6:
+            self.recent_scene_kinds = self.recent_scene_kinds[-6:]
+        self.scene_kind_times_ms[cleaned] = clamped_now_ms
 
     def _identity_seed_values(self) -> tuple[bool, str, int]:
         identity = self.memory.identity

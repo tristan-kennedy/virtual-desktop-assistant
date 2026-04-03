@@ -61,5 +61,5 @@ def test_profile_store_omits_identity_fields_when_saving(tmp_path) -> None:
         "voice_id": "",
         "rate": 1,
         "volume": 100,
-        "pitch": -1,
+        "pitch": 8,
     }

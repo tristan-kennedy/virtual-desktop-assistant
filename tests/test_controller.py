@@ -133,6 +133,7 @@ def test_controller_uses_followup_turn_after_successful_action() -> None:
             "say": "I am taking a dramatic lap.",
             "animation": "excited",
             "dialogue_category": "normal",
+            "scene_kind": "entrance",
             "action": {"action_id": "roam_somewhere", "args": {}},
             "emotion": _emotion_payload(mood=72, energy=80, excitement=78, confidence=66),
             "cooldown_ms": 14000,
@@ -142,6 +143,7 @@ def test_controller_uses_followup_turn_after_successful_action() -> None:
             "say": "New coordinates acquired.",
             "animation": "talk",
             "dialogue_category": "normal",
+            "scene_kind": "celebration",
             "action": None,
             "emotion": _emotion_payload(mood=74, energy=79, excitement=76, confidence=68),
             "cooldown_ms": 14000,
@@ -162,10 +164,15 @@ def test_controller_uses_followup_turn_after_successful_action() -> None:
     assert len(result.loop_steps) == 2
     assert result.loop_stop_reason == "completed_after_action"
     assert provider.prompts[0]["event"] == "startup"
+    assert provider.prompts[0]["scene_context"]["allowed_scene_kinds"] == ["entrance", "idea"]
+    assert provider.prompts[0]["scene_context"]["recommended_scene_kind"] == "entrance"
     assert provider.prompts[1]["event"] == "action_result"
     assert provider.prompts[1]["context"]["latest_execution"]["directive_kind"] == "start_walk"
+    assert provider.prompts[1]["scene_context"]["allowed_scene_kinds"] == ["celebration", "idea"]
+    assert provider.prompts[1]["scene_context"]["recommended_scene_kind"] == "celebration"
     assert result.session_state is not None
     assert result.session_state.last_assistant_line == result.turn.say
+    assert result.session_state.last_scene_kind == "celebration"
     assert result.session_state.emotion == EmotionState(
         mood=74,
         energy=79,
@@ -282,6 +289,7 @@ def test_inactivity_turn_preserves_silent_emote_and_uses_neutral_event() -> None
             "say": "",
             "animation": "surprised",
             "dialogue_category": "thought",
+            "scene_kind": "idea",
             "action": None,
             "cooldown_ms": 12000,
             "behavior": "emote",
@@ -304,8 +312,34 @@ def test_inactivity_turn_preserves_silent_emote_and_uses_neutral_event() -> None
     assert result.loop_stop_reason == "no_action"
     assert provider.prompts[0]["event"] == "inactive_tick"
     assert provider.prompts[0]["context"]["seconds_since_user_interaction"] == 42
+    assert provider.prompts[0]["scene_context"]["allowed_scene_kinds"] == ["joke", "idea"]
     assert result.session_state is not None
     assert result.session_state.last_autonomous_behavior == "emote"
+    assert result.session_state.consecutive_silent_autonomous_turns == 1
+    assert result.session_state.last_scene_kind == "idea"
+
+
+def test_inactivity_turn_resets_silent_streak_after_spoken_line() -> None:
+    controller = AssistantController(
+        provider=SequenceProvider(
+            {
+                "say": "A tiny stage whisper for the quiet desktop.",
+                "dialogue_category": "thought",
+                "scene_kind": "idea",
+                "animation": "talk",
+                "behavior": "quip",
+                "cooldown_ms": 12000,
+                "topic": "idle",
+            }
+        )
+    )
+    state = SessionState(consecutive_silent_autonomous_turns=2)
+
+    result = controller.inactivity_turn(state)
+
+    assert result.session_state is not None
+    assert result.session_state.autonomous_chats == 1
+    assert result.session_state.consecutive_silent_autonomous_turns == 0
 
 
 def test_inactivity_turn_does_not_apply_memory_updates() -> None:
@@ -351,6 +385,7 @@ def test_controller_uses_followup_turn_after_rejected_action() -> None:
                 "say": "That routine is tangled in the curtain cord.",
                 "animation": "talk",
                 "dialogue_category": "alert",
+                "scene_kind": "panic",
                 "action": None,
                 "cooldown_ms": 12000,
                 "topic": "action",
@@ -367,6 +402,39 @@ def test_controller_uses_followup_turn_after_rejected_action() -> None:
     assert result.turn.say == "That routine is tangled in the curtain cord."
     assert len(result.loop_steps) == 2
     assert result.loop_stop_reason == "completed_after_action"
+    assert result.session_state is not None
+    assert result.session_state.last_scene_kind == "panic"
+
+
+def test_action_result_scene_context_uses_panic_after_failed_execution() -> None:
+    provider = SequenceProvider(
+        {
+            "say": "",
+            "animation": "surprised",
+            "dialogue_category": "normal",
+            "action": {"action_id": "roam_somewhere", "args": {}},
+            "cooldown_ms": 12000,
+            "topic": "action",
+        },
+        {
+            "say": "That routine is tangled in the curtain cord.",
+            "animation": "talk",
+            "dialogue_category": "alert",
+            "scene_kind": "panic",
+            "action": None,
+            "cooldown_ms": 12000,
+            "topic": "action",
+        },
+    )
+    controller = AssistantController(
+        provider=provider,
+        action_executor=RejectedActionExecutor(),
+    )
+
+    controller.do_something_turn(SessionState())
+
+    assert provider.prompts[1]["scene_context"]["allowed_scene_kinds"] == ["panic", "idea"]
+    assert provider.prompts[1]["scene_context"]["recommended_scene_kind"] == "panic"
 
 
 def test_controller_returns_followup_error_turn_when_second_model_pass_fails() -> None:

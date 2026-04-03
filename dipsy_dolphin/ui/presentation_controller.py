@@ -8,8 +8,11 @@ from .presentation_models import CharacterPresentation
 
 @dataclass
 class PresentationSceneState:
+    """Presentation inputs before renderer-facing pose/expression resolution."""
+
     animation_state: str = "idle"
     dialogue_category: Optional[str] = None
+    scene_kind: str = ""
     emotion: EmotionState = field(default_factory=EmotionState)
     facing: str = "right"
     extra_effects: Tuple[str, ...] = field(default_factory=tuple)
@@ -26,6 +29,9 @@ class PresentationController:
 
     def set_dialogue_category(self, category: Optional[str]) -> None:
         self.state.dialogue_category = category
+
+    def set_scene_kind(self, scene_kind: str) -> None:
+        self.state.scene_kind = str(scene_kind or "").strip().lower()
 
     def set_facing(self, facing: str) -> None:
         self.state.facing = facing
@@ -102,6 +108,37 @@ class PresentationController:
         elif self.state.dialogue_category == "status" and pose_id == "idle":
             pose_id = "talk"
             mouth_state = "talk_open"
+
+        if self.state.scene_kind == "entrance":
+            expression_id = "happy"
+            active_effects.append("spark")
+            if pose_id == "idle":
+                pose_id = "excited"
+                mouth_state = "talk_open"
+        elif self.state.scene_kind == "celebration":
+            expression_id = "happy"
+            active_effects.append("spark")
+            if pose_id in {"idle", "talk"}:
+                pose_id = "laugh"
+                mouth_state = "talk_open"
+        elif self.state.scene_kind == "panic":
+            expression_id = "concerned"
+            active_effects.append("sweat")
+            if pose_id in {"idle", "talk"}:
+                pose_id = "surprised"
+                mouth_state = "talk_open"
+        elif self.state.scene_kind == "joke":
+            expression_id = "happy"
+            active_effects.append("spark")
+            if pose_id == "idle":
+                pose_id = "laugh"
+                mouth_state = "talk_open"
+        elif self.state.scene_kind == "idea":
+            expression_id = "concerned"
+            active_effects.append("question")
+            if pose_id == "idle":
+                pose_id = "surprised"
+                mouth_state = "talk_open"
 
         emotion = self.state.emotion.bounded()
         if emotion.excitement >= 65:

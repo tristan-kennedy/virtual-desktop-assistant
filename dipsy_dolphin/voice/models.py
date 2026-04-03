@@ -12,6 +12,9 @@ SPEECH_EVENT_TYPES = (
     "cancelled",
     "failed",
 )
+DEFAULT_VOICE_RATE = 1
+DEFAULT_VOICE_VOLUME = 100
+DEFAULT_VOICE_PITCH = 8
 
 
 def _bounded_int(value: object, *, minimum: int, maximum: int, fallback: int) -> int:
@@ -36,18 +39,22 @@ class VoiceSettings:
     enabled: bool = True
     profile: str = "retro_classic"
     voice_id: str = ""
-    rate: int = 1
-    volume: int = 100
-    pitch: int = -1
+    rate: int = DEFAULT_VOICE_RATE
+    volume: int = DEFAULT_VOICE_VOLUME
+    pitch: int = DEFAULT_VOICE_PITCH
 
     def bounded(self) -> VoiceSettings:
         return VoiceSettings(
             enabled=bool(self.enabled),
             profile=normalize_voice_profile(self.profile),
             voice_id=str(self.voice_id or "").strip(),
-            rate=_bounded_int(self.rate, minimum=-10, maximum=10, fallback=1),
-            volume=_bounded_int(self.volume, minimum=0, maximum=100, fallback=100),
-            pitch=_bounded_int(self.pitch, minimum=-10, maximum=10, fallback=-1),
+            rate=_bounded_int(self.rate, minimum=-10, maximum=10, fallback=DEFAULT_VOICE_RATE),
+            volume=_bounded_int(
+                self.volume, minimum=0, maximum=100, fallback=DEFAULT_VOICE_VOLUME
+            ),
+            pitch=_bounded_int(
+                self.pitch, minimum=-10, maximum=10, fallback=DEFAULT_VOICE_PITCH
+            ),
         )
 
 
@@ -58,9 +65,9 @@ def coerce_voice_settings(payload: object) -> VoiceSettings:
         enabled=bool(payload.get("enabled", True)),
         profile=str(payload.get("profile", "retro_classic")),
         voice_id=str(payload.get("voice_id", "")).strip(),
-        rate=payload.get("rate", 1),
-        volume=payload.get("volume", 100),
-        pitch=payload.get("pitch", -1),
+        rate=payload.get("rate", DEFAULT_VOICE_RATE),
+        volume=payload.get("volume", DEFAULT_VOICE_VOLUME),
+        pitch=payload.get("pitch", DEFAULT_VOICE_PITCH),
     ).bounded()
 
 

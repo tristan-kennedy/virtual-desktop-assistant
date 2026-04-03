@@ -142,14 +142,16 @@ def resolve_turn_presentation(
     animation_state = _resolve_animation_state(
         requested_animation=turn.animation,
         dialogue_category=category,
+        scene_kind=turn.scene_kind,
         emotion=emotion,
     )
-    bubble_style = BUBBLE_STYLES.get(category, BUBBLE_STYLES["normal"])
+    bubble_style = _resolve_bubble_style(category=category, scene_kind=turn.scene_kind)
     return ResolvedTurnPresentation(
         animation_state=animation_state,
         bubble_style=bubble_style,
         dialogue_category=category,
-        delivery=DELIVERY_PROFILES.get(category, DELIVERY_PROFILES["normal"]),
+        scene_kind=turn.scene_kind,
+        delivery=_resolve_delivery(category=category, scene_kind=turn.scene_kind),
     )
 
 
@@ -158,6 +160,7 @@ def resolve_waiting_presentation(*, emotion: EmotionState) -> ResolvedTurnPresen
         animation_state=_resolve_animation_state(
             requested_animation="think",
             dialogue_category="thought",
+            scene_kind="",
             emotion=emotion,
         ),
         bubble_style=BUBBLE_STYLES["thought"],
@@ -171,6 +174,7 @@ def resolve_loading_presentation(*, emotion: EmotionState) -> ResolvedTurnPresen
         animation_state=_resolve_animation_state(
             requested_animation="loading",
             dialogue_category="status",
+            scene_kind="",
             emotion=emotion,
         ),
         bubble_style=BUBBLE_STYLES["status"],
@@ -185,6 +189,7 @@ def resolve_busy_note_presentation(*, emotion: EmotionState) -> ResolvedTurnPres
         animation_state=_resolve_animation_state(
             requested_animation="surprised",
             dialogue_category=category,
+            scene_kind="",
             emotion=emotion,
         ),
         bubble_style=BUBBLE_STYLES[category],
@@ -197,11 +202,23 @@ def _resolve_animation_state(
     *,
     requested_animation: str,
     dialogue_category: str,
+    scene_kind: str,
     emotion: EmotionState,
 ) -> str:
     cleaned_animation = requested_animation.strip().lower()
     if cleaned_animation and cleaned_animation not in {"idle", "walk", "talk"}:
         return cleaned_animation
+
+    if scene_kind == "celebration":
+        return "laugh" if emotion.excitement >= 35 else "excited"
+    if scene_kind == "panic":
+        return "surprised"
+    if scene_kind == "joke":
+        return "laugh"
+    if scene_kind == "entrance":
+        return "excited" if emotion.familiarity >= 35 else "talk"
+    if scene_kind == "idea":
+        return "surprised" if emotion.confidence >= 35 else "talk"
 
     if dialogue_category == "joke":
         return "laugh" if emotion.excitement >= 35 else "talk"
@@ -220,3 +237,57 @@ def _resolve_animation_state(
     if emotion.energy <= 25:
         return "sad"
     return "talk"
+
+
+def _resolve_bubble_style(*, category: str, scene_kind: str) -> BubbleStyle:
+    if category != "normal":
+        return BUBBLE_STYLES.get(category, BUBBLE_STYLES["normal"])
+
+    if scene_kind == "entrance":
+        return BUBBLE_STYLES["onboarding"]
+    if scene_kind in {"celebration", "joke"}:
+        return BUBBLE_STYLES["joke"]
+    if scene_kind == "panic":
+        return BUBBLE_STYLES["alert"]
+    if scene_kind == "idea":
+        return BUBBLE_STYLES["thought"]
+    return BUBBLE_STYLES["normal"]
+
+
+def _resolve_delivery(*, category: str, scene_kind: str) -> DialogueDelivery:
+    base = DELIVERY_PROFILES.get(category, DELIVERY_PROFILES["normal"])
+    if scene_kind == "entrance":
+        return DialogueDelivery(
+            reveal_mode=base.reveal_mode,
+            chunk_chars=base.chunk_chars,
+            chunk_pause_ms=base.chunk_pause_ms,
+            hold_ms=base.hold_ms + 500,
+            interrupt_priority=base.interrupt_priority,
+            queue_policy=base.queue_policy,
+            replaceable=base.replaceable,
+        )
+    if scene_kind == "celebration":
+        return DialogueDelivery(
+            reveal_mode="staged",
+            chunk_chars=max(22, base.chunk_chars - 2),
+            chunk_pause_ms=base.chunk_pause_ms,
+            hold_ms=base.hold_ms + 900,
+            interrupt_priority=max(base.interrupt_priority, 3),
+            queue_policy=base.queue_policy,
+            replaceable=base.replaceable,
+        )
+    if scene_kind == "panic":
+        return DELIVERY_PROFILES["alert"]
+    if scene_kind == "joke":
+        return DELIVERY_PROFILES["joke"]
+    if scene_kind == "idea":
+        return DialogueDelivery(
+            reveal_mode="staged",
+            chunk_chars=min(base.chunk_chars, 22),
+            chunk_pause_ms=base.chunk_pause_ms,
+            hold_ms=max(1600, base.hold_ms - 400),
+            interrupt_priority=base.interrupt_priority,
+            queue_policy=base.queue_policy,
+            replaceable=base.replaceable,
+        )
+    return base
