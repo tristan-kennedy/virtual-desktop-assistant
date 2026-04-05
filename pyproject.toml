@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dipsy-dolphin"
-version = "0.1.0b5"
-description = "Playful Windows desktop assistant prototype."
+version = "1.0.0"
+description = "Playful Windows desktop assistant."
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
 dependencies = [

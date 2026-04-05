@@ -111,6 +111,14 @@ Only use the packaging commands when you want a bundled app or installer. They c
 One workflow now lives in `.github/workflows/versioned-release.yml`.
 
 - Pushes to `main` only create a release when `project.version` changes in `pyproject.toml`
-- PEP 440 prerelease versions like `0.3.0b1` or `0.3.0rc1` publish GitHub prereleases
-- Stable versions like `0.3.0` publish normal GitHub releases
-- The generated installer asset is named from that same version, such as `DipsyDolphin-Setup-0.3.0b1.exe`
+- Stable versions like `1.0.0` publish normal GitHub releases
+- The generated installer asset is named from that same version, such as `DipsyDolphin-Setup-1.0.0.exe`
+- Release notes are published from `docs/releases/<version>.md`
+- The workflow runs targeted release-helper tests, builds the installer, and performs a fast release smoke validation before publishing
+
+## Packaging assets and signing prep
+
+- Windows branding assets live under `packaging/windows/assets/`
+- `app.ico` is the shared app and installer icon source for the current v1 release path
+- `wizard-image.bmp` and `wizard-small.bmp` are optional future installer branding hooks and are not required for current builds
+- Code signing is not enabled yet, but the packaging flow is now isolated enough to add a signing step later without restructuring the build

@@ -9,6 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
+RELEASE_NOTES_DIR = REPO_ROOT / "docs" / "releases"
 _PRERELEASE_PATTERN = re.compile(r"(?i)(?:a|b|rc|dev)\d*(?:$|[.+-])")
 _FILENAME_SAFE_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -50,11 +51,16 @@ def sanitize_for_filename(value: str) -> str:
     return sanitized or "artifact"
 
 
+def release_notes_path_for_version(version: str, release_notes_dir: Path = RELEASE_NOTES_DIR) -> Path:
+    return release_notes_dir / f"{sanitize_for_filename(version)}.md"
+
+
 def build_release_metadata(current_version: str, previous_version: str | None) -> dict[str, str]:
     version_changed = current_version != previous_version
     prerelease = is_prerelease_version(current_version)
     sanitized_version = sanitize_for_filename(current_version)
     installer_base_name = f"DipsyDolphin-Setup-{sanitized_version}"
+    release_notes_path = release_notes_path_for_version(current_version)
 
     return {
         "current_version": current_version,
@@ -67,6 +73,7 @@ def build_release_metadata(current_version: str, previous_version: str | None) -
         "release_name": f"Dipsy Dolphin {current_version}",
         "installer_base_name": installer_base_name,
         "installer_path": f".artifacts/windows/installer/{installer_base_name}.exe",
+        "release_notes_path": release_notes_path.relative_to(REPO_ROOT).as_posix(),
     }
 
 

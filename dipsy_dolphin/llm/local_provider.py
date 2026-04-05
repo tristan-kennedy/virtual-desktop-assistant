@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .config import ResolvedModelBundle
 from .response_parser import extract_json_object
-from .runtime_catalog import DEFAULT_RUNTIME_BUNDLE
+from .runtime_catalog import select_runtime_bundle
 
 
 @dataclass
@@ -33,6 +33,7 @@ class GenerationSettings:
 class LocalLlamaProvider:
     def __init__(self, resolved_bundle: ResolvedModelBundle | None) -> None:
         self.resolved_bundle = resolved_bundle
+        self.runtime_bundle = select_runtime_bundle()
         self._server_process: subprocess.Popen[str] | None = None
         self._server_port: int | None = None
         self._server_executable: Path | None = None
@@ -245,7 +246,7 @@ class LocalLlamaProvider:
                 return candidate
 
         for root in _candidate_runtime_roots():
-            for candidate in root.rglob(DEFAULT_RUNTIME_BUNDLE.server_executable):
+            for candidate in root.rglob(self.runtime_bundle.server_executable):
                 if candidate.exists():
                     return candidate
         return None
@@ -253,15 +254,18 @@ class LocalLlamaProvider:
 
 def _candidate_runtime_roots() -> list[Path]:
     roots: list[Path] = []
+    runtime_bundle = select_runtime_bundle()
 
     env_dir = os.environ.get("DIPSY_RUNTIME_DIR", "").strip()
     if env_dir:
         roots.append(Path(env_dir))
 
     if getattr(sys, "frozen", False):
+        roots.append(Path(sys.executable).resolve().parent / "runtime" / runtime_bundle.runtime_id)
         roots.append(Path(sys.executable).resolve().parent / "runtime")
 
     package_root = Path(__file__).resolve().parents[2]
+    roots.append(package_root / ".artifacts" / "windows" / "llama-runtime" / runtime_bundle.runtime_id)
     roots.append(package_root / ".artifacts" / "windows" / "llama-runtime")
     roots.append(package_root / "runtime")
 

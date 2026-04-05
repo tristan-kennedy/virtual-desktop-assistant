@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Tuple
 
 from .presentation_models import CharacterBounds
 
@@ -10,15 +10,14 @@ from .presentation_models import CharacterBounds
 class CharacterAssetManifest:
     character_id: str
     style_variant: str
-    future_style_variant: str
-    fallback_draw_mode: str
+    fallback_pose_id: str
+    speech_pose_id: str
     bounds: CharacterBounds
-    layer_order: Tuple[str, ...]
-    supported_states: Dict[str, Tuple[str, ...]]
+    supported_poses: Tuple[str, ...]
 
 
 def load_character_manifest(character_id: str = "dipsy") -> CharacterAssetManifest:
-    manifest_path = _repo_root() / "assets" / "character" / character_id / "manifest.json"
+    manifest_path = _repo_root() / "assets" / character_id / "manifest.json"
     if not manifest_path.exists():
         return _default_manifest(character_id)
 
@@ -29,12 +28,15 @@ def load_character_manifest(character_id: str = "dipsy") -> CharacterAssetManife
 
     anchors = payload.get("anchors", {})
     canvas = payload.get("canvas_size", {})
-    supported = payload.get("supported", {})
+    poses = payload.get("poses")
+    if not isinstance(poses, list):
+        supported = payload.get("supported", {})
+        poses = supported.get("poses", [])
     return CharacterAssetManifest(
         character_id=str(payload.get("character_id", character_id)),
-        style_variant=str(payload.get("style_variant", "flat-retro")),
-        future_style_variant=str(payload.get("future_style_variant", "faux-3d")),
-        fallback_draw_mode=str(payload.get("fallback_draw_mode", "vector")),
+        style_variant=str(payload.get("style_variant", "rendered-sprite")),
+        fallback_pose_id=str(payload.get("fallback_pose_id", "idle")).strip() or "idle",
+        speech_pose_id=str(payload.get("speech_pose_id", "talk")).strip() or "talk",
         bounds=CharacterBounds(
             width=int(canvas.get("width", 200)),
             height=int(canvas.get("height", 220)),
@@ -42,10 +44,7 @@ def load_character_manifest(character_id: str = "dipsy") -> CharacterAssetManife
             feet_anchor=_as_point(anchors.get("feet"), (104, 194)),
             look_anchor=_as_point(anchors.get("look"), (104, 74)),
         ),
-        layer_order=tuple(payload.get("layer_order", _default_manifest(character_id).layer_order)),
-        supported_states={
-            key: tuple(value) for key, value in supported.items() if isinstance(value, list)
-        },
+        supported_poses=tuple(str(value).strip() for value in poses if str(value).strip()),
     )
 
 
@@ -65,9 +64,9 @@ def _as_point(value: object, fallback: Tuple[int, int]) -> Tuple[int, int]:
 def _default_manifest(character_id: str) -> CharacterAssetManifest:
     return CharacterAssetManifest(
         character_id=character_id,
-        style_variant="flat-retro",
-        future_style_variant="faux-3d",
-        fallback_draw_mode="vector",
+        style_variant="rendered-sprite",
+        fallback_pose_id="idle",
+        speech_pose_id="talk",
         bounds=CharacterBounds(
             width=200,
             height=220,
@@ -75,22 +74,5 @@ def _default_manifest(character_id: str) -> CharacterAssetManifest:
             feet_anchor=(104, 194),
             look_anchor=(104, 74),
         ),
-        layer_order=("shadow", "tail", "body", "head", "face", "mouth", "badge", "fx"),
-        supported_states={
-            "poses": (
-                "idle",
-                "walk",
-                "loading",
-                "talk",
-                "think",
-                "laugh",
-                "surprised",
-                "sad",
-                "excited",
-            ),
-            "expressions": ("neutral", "happy", "concerned"),
-            "eye_states": ("open", "blink"),
-            "mouth_states": ("closed", "talk_open"),
-            "effects": ("question", "spark", "sweat", "loading"),
-        },
+        supported_poses=("idle", "talk"),
     )

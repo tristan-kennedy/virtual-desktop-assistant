@@ -14,6 +14,26 @@
   #define OutputBaseName "DipsyDolphin-Setup"
 #endif
 
+#ifndef AppPublisher
+  #define AppPublisher "Dipsy Dolphin Project"
+#endif
+
+#ifndef AppIconFile
+  #define AppIconFile ""
+#endif
+
+#ifndef WizardImageFile
+  #define WizardImageFile ""
+#endif
+
+#ifndef WizardSmallImageFile
+  #define WizardSmallImageFile ""
+#endif
+
+#ifndef InstallerDescription
+  #define InstallerDescription "Dipsy Dolphin Windows installer"
+#endif
+
 #ifndef ModelDisplayName
   #define ModelDisplayName "Bundled local model"
 #endif
@@ -51,28 +71,27 @@
 #endif
 
 #ifndef RuntimeArchiveSha256
-  #error RuntimeArchiveSha256 must be defined.
+  #define RuntimeArchiveSha256 ""
 #endif
 
-#ifndef CudaDownloadUrl
-  #error CudaDownloadUrl must be defined.
+#ifndef RuntimeSupportDownloadUrl
+  #define RuntimeSupportDownloadUrl ""
 #endif
 
-#ifndef CudaArchiveName
-  #error CudaArchiveName must be defined.
+#ifndef RuntimeSupportArchiveName
+  #define RuntimeSupportArchiveName ""
 #endif
 
-#ifndef CudaExtractedSize
-  #error CudaExtractedSize must be defined.
+#ifndef RuntimeSupportExtractedSize
+  #define RuntimeSupportExtractedSize "0"
 #endif
 
-#ifndef CudaArchiveSha256
-  #error CudaArchiveSha256 must be defined.
+#ifndef RuntimeSupportArchiveSha256
+  #define RuntimeSupportArchiveSha256 ""
 #endif
 
 #define AppName "Dipsy Dolphin"
 #define AppExeName "DipsyDolphin.exe"
-#define AppPublisher "Dipsy Dolphin Project"
 #define AppId "DipsyDolphinDesktopAssistant"
 
 [Setup]
@@ -82,6 +101,11 @@ AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppPublisher}
 AppComments=Bundled local companion model: {#ModelDisplayName}
+VersionInfoCompany={#AppPublisher}
+VersionInfoDescription={#InstallerDescription}
+VersionInfoProductName={#AppName}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\Dipsy Dolphin
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -93,6 +117,15 @@ Compression=lzma
 SolidCompression=yes
 ArchiveExtraction=full
 WizardStyle=modern
+#if AppIconFile != ""
+SetupIconFile={#AppIconFile}
+#endif
+#if WizardImageFile != ""
+WizardImageFile={#WizardImageFile}
+#endif
+#if WizardSmallImageFile != ""
+WizardSmallImageFile={#WizardSmallImageFile}
+#endif
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
@@ -107,8 +140,14 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#ModelDownloadUrl}"; DestDir: "{app}\models\{#ModelInstallSubdir}"; DestName: "{#ModelFilename}"; ExternalSize: {#ModelSizeBytes}; Hash: "{#ModelSha256}"; Flags: external download ignoreversion
+#if RuntimeArchiveSha256 != ""
 Source: "{#RuntimeDownloadUrl}"; DestDir: "{app}\runtime"; DestName: "{#RuntimeArchiveName}"; ExternalSize: {#RuntimeExtractedSize}; Hash: "{#RuntimeArchiveSha256}"; Flags: external download extractarchive ignoreversion recursesubdirs createallsubdirs
-Source: "{#CudaDownloadUrl}"; DestDir: "{app}\runtime"; DestName: "{#CudaArchiveName}"; ExternalSize: {#CudaExtractedSize}; Hash: "{#CudaArchiveSha256}"; Flags: external download extractarchive ignoreversion recursesubdirs createallsubdirs
+#else
+Source: "{#RuntimeDownloadUrl}"; DestDir: "{app}\runtime"; DestName: "{#RuntimeArchiveName}"; ExternalSize: {#RuntimeExtractedSize}; Flags: external download extractarchive ignoreversion recursesubdirs createallsubdirs
+#endif
+#if RuntimeSupportDownloadUrl != ""
+Source: "{#RuntimeSupportDownloadUrl}"; DestDir: "{app}\runtime"; DestName: "{#RuntimeSupportArchiveName}"; ExternalSize: {#RuntimeSupportExtractedSize}; Hash: "{#RuntimeSupportArchiveSha256}"; Flags: external download extractarchive ignoreversion recursesubdirs createallsubdirs
+#endif
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"

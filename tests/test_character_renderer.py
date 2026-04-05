@@ -15,7 +15,8 @@ def test_renderer_loads_idle_sprite_sequence_from_assets() -> None:
 
     assert app is not None
     assert renderer.has_frames() is True
-    assert renderer.frame_count() == 24
+    assert renderer.frame_count("idle") == 24
+    assert renderer.frame_count("talk") == 24
 
 
 def test_renderer_doubles_sprite_size_from_source_frame() -> None:
@@ -24,7 +25,7 @@ def test_renderer_doubles_sprite_size_from_source_frame() -> None:
 
     manifest = load_character_manifest()
     renderer = CharacterRenderer(manifest)
-    frame = renderer._idle_frames[0]
+    frame = renderer._pose_frames["idle"][0]
     rect = renderer._target_rect_for_frame(frame)
 
     assert app is not None
@@ -38,7 +39,7 @@ def test_renderer_bubble_anchor_tracks_visible_sprite_area() -> None:
 
     manifest = load_character_manifest()
     renderer = CharacterRenderer(manifest)
-    bubble_x, bubble_y = renderer.bubble_anchor()
+    bubble_x, bubble_y = renderer.bubble_anchor("idle")
 
     assert app is not None
     assert abs(bubble_x - manifest.bounds.feet_anchor[0]) <= 1

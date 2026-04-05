@@ -1,0 +1,20 @@
+{
+  "character_id": "dipsy",
+  "style_variant": "rendered-sprite",
+  "fallback_pose_id": "idle",
+  "speech_pose_id": "talk",
+  "canvas_size": {
+    "width": 400,
+    "height": 440
+  },
+  "anchors": {
+    "bubble": [208, 80],
+    "feet": [208, 388],
+    "look": [208, 148]
+  },
+  "poses": ["idle", "talk"],
+  "notes": {
+    "current_pass": "Whole-pose sprite runtime with pose folders directly under assets/dipsy/ and loop-boundary switching before speech starts.",
+    "future_direction": "Add more whole-pose animation folders as needed, then optionally reintroduce layered facial assets later if they prove necessary."
+  }
+}

@@ -141,7 +141,7 @@ wheels = [
 
 [[package]]
 name = "dipsy-dolphin"
-version = "0.1.0b5"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyside6" },

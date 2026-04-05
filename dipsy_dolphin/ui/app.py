@@ -219,6 +219,7 @@ class AssistantApp(QWidget):
         self._last_voice_selection_note = ""
         self._pending_voice_requests: dict[str, SpeechRequest] = {}
         self._started_voice_requests: set[str] = set()
+        self._dialogue_waiting_for_pose_id = ""
         self.dialogue_presenter = DialoguePresenter()
 
         self.controller = AssistantController()
@@ -229,6 +230,7 @@ class AssistantApp(QWidget):
         self.animation_state_machine = AnimationStateMachine()
         self.presentation_controller = PresentationController()
         self.character_widget = CharacterWidget(self)
+        self.character_widget.pose_presented.connect(self._on_character_pose_presented)
         bounds = self.character_widget.character_bounds()
         self.setFixedSize(bounds.width, bounds.height)
         self.character_widget.setGeometry(0, 0, bounds.width, bounds.height)
@@ -520,19 +522,12 @@ class AssistantApp(QWidget):
         self, state: str, duration_ms: Optional[int] = None, force: bool = False
     ) -> None:
         now_ms = self._now_ms()
-        accepted = self.animation_state_machine.request_state(
+        self.animation_state_machine.request_state(
             state,
             now_ms,
             duration_ms=duration_ms,
             force=force,
         )
-        if not accepted and state != "talk":
-            self.animation_state_machine.request_state(
-                "talk",
-                now_ms,
-                duration_ms=duration_ms,
-                force=True,
-            )
         self._apply_presentation()
 
     def _clear_animation_overlay(self) -> None:
@@ -1169,11 +1164,38 @@ class AssistantApp(QWidget):
         self._pending_voice_requests.clear()
         self._started_voice_requests.clear()
         self._active_voice_utterances.clear()
+        self._dialogue_waiting_for_pose_id = ""
         if stop_voice:
             self.voice_service.stop(clear_queue=True)
         self.bubble_window.hide()
         self.current_dialogue_category = None
         self.current_scene_kind = ""
+
+    def _dialogue_pose_id(self, cue: ResolvedTurnPresentation) -> str:
+        if cue.animation_state in {"idle", "walk"}:
+            return self.character_widget.manifest.speech_pose_id
+        return cue.animation_state
+
+    def _dialogue_can_start(self, pose_id: str) -> bool:
+        resolved_pose_id = self.character_widget.resolve_pose_id(pose_id)
+        if not resolved_pose_id:
+            return True
+        return self.character_widget.is_pose_active(resolved_pose_id)
+
+    def _wait_for_dialogue_pose(self, pose_id: str) -> None:
+        self._dialogue_waiting_for_pose_id = self.character_widget.resolve_pose_id(pose_id)
+        self.bubble_window.hide()
+
+    def _on_character_pose_presented(self, pose_id: str) -> None:
+        if not self._dialogue_waiting_for_pose_id:
+            return
+        if pose_id != self._dialogue_waiting_for_pose_id:
+            return
+        if self.dialogue_presenter.active_item is None:
+            self._dialogue_waiting_for_pose_id = ""
+            return
+        self._dialogue_waiting_for_pose_id = ""
+        self._show_active_dialogue()
 
     def _show_active_dialogue(self) -> None:
         active_item = self.dialogue_presenter.active_item
@@ -1181,6 +1203,7 @@ class AssistantApp(QWidget):
             self.bubble_window.hide()
             self.current_dialogue_category = None
             self.current_scene_kind = ""
+            self._dialogue_waiting_for_pose_id = ""
             self._clear_animation_overlay()
             self._sync_presentation_to_motion()
             return
@@ -1188,14 +1211,17 @@ class AssistantApp(QWidget):
         cue = active_item.cue
         self.current_dialogue_category = cue.dialogue_category
         self.current_scene_kind = cue.scene_kind
-        active_animation = cue.animation_state
-        if active_animation in {"idle", "walk"}:
-            active_animation = "talk"
+        active_animation = self._dialogue_pose_id(cue)
         self._request_animation(
             active_animation,
             duration_ms=self.dialogue_presenter.active_remaining_duration_ms(),
             force=True,
         )
+        if not self._dialogue_can_start(active_animation):
+            self._wait_for_dialogue_pose(active_animation)
+            return
+
+        self._dialogue_waiting_for_pose_id = ""
         self.bubble_window.show_text(self.dialogue_presenter.active_text(), cue.bubble_style)
         self.bubble_window.show()
         self.bubble_window.raise_()

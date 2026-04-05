@@ -1,46 +1,28 @@
 # Dipsy Dolphin
 
-Dipsy Dolphin is a small Windows desktop companion inspired by theatrical retro assistants like BonziBuddy.
-It is intentionally visible, character-driven, and local-first: a floating UI talks to a bundled local LLM, turns the model output into structured turns, and keeps the runtime legible as the project grows toward richer assistant capabilities through conversation.
+This project is currently on pause. I am not actively expanding it right now, but the repo is being left in a runnable, packaged, release-ready state.
 
-## What the app does
+Dipsy Dolphin is a small Windows desktop companion inspired by theatrical retro assistants like BonziBuddy. It is intentionally visible, character-driven, and local-first.
 
-- Shows a floating PySide6 desktop character.
-- Supports drag-to-move and quick chat directly with the character.
-- Uses a bundled local GGUF model through llama.cpp for startup, onboarding, chat-first requests, and inactivity-driven turns.
-- Parses model output into structured turn data including `say`, `dialogue_category`, `animation`, `emotion`, `memory_updates`, and `action` before the UI uses it.
-- Plays visible presentation states like idle, walk, think, talk, laugh, surprised, sad, and excited.
-- Can speak lines through an optional retro Windows voice service that prefers classic old-school voices and keeps speech interruptible.
-- Saves both a local profile and structured memory on Windows so Dipsy remembers identity, preferences, and long-term facts between launches.
+## Current functionality
 
-## Current runtime assumptions
+- Shows a floating always-on-top PySide6 desktop character with sprite-based `idle` and `talk` animation.
+- Supports drag-to-move, double-click chat, a speech bubble, and optional retro Windows voice playback.
+- Uses a bundled local GGUF model through llama.cpp for chat, startup behavior, and inactivity-driven turns.
+- Saves both a local profile and structured memory on Windows.
+- Supports bounded desktop actions through chat: browser search, opening `http` or `https` URLs, opening an existing local path, and focusing or opening supported apps.
+- Supported built-in app targets are the default browser, Terminal, Explorer, Notepad, and Settings.
 
-- The app is currently built around a bundled local model and a single desktop UI host.
-- Model output is translated into structured runtime data before presentation or execution.
-- The current capability surface is small, but the architecture is intended to expand toward richer assistant actions invoked through chat.
-- Core behavior, presentation, and execution plumbing should stay separated as the interface grows.
+## Project layout
 
-## Current runtime shape
-
-- `dipsy_dolphin/__main__.py` - console entrypoint for `uv run dipsy-dolphin`.
-- `dipsy_dolphin/ui/app.py` - main PySide6 shell, timers, dialogs, movement, and controller task lifecycle.
-- `dipsy_dolphin/core/controller.py` - main dialogue and autonomy coordinator; builds prompts, calls the provider, applies runtime rules, and returns structured turns.
-- `dipsy_dolphin/core/controller_models.py` - `AssistantTurn`, `ActionRequest`, and `ControllerResult`.
-- `dipsy_dolphin/core/brain.py` - profile parsing and session reset helpers for the LLM-driven flow.
-- `dipsy_dolphin/core/models.py` and `dipsy_dolphin/core/memory.py` - user/session state and structured memory dataclasses shared across UI and controller.
-- `dipsy_dolphin/llm/prompt_builder.py` - system prompt and per-event user payload construction.
-- `dipsy_dolphin/llm/response_parser.py` - JSON extraction, validation, and sanitization of model output.
-- `dipsy_dolphin/llm/local_provider.py` - bundled llama.cpp runtime management and local generation requests.
-- `dipsy_dolphin/llm/config.py`, `dipsy_dolphin/llm/model_catalog.py`, `dipsy_dolphin/llm/runtime_catalog.py` - model/runtime discovery and bundle metadata.
-- `dipsy_dolphin/desktop/` - Windows desktop-control backend, app catalog, and bounded app launch/focus/open helpers.
-- `dipsy_dolphin/actions/registry.py` - current action registry used to sanitize structured action requests.
-- `dipsy_dolphin/ui/presentation_policy.py`, `dipsy_dolphin/ui/presentation_controller.py`, `dipsy_dolphin/ui/animation_state_machine.py`, `dipsy_dolphin/ui/character_widget.py`, and `dipsy_dolphin/ui/character_renderer.py` - semantic presentation mapping, animation state handling, bubble styling, and character drawing.
-- `dipsy_dolphin/storage/profile_store.py` and `dipsy_dolphin/storage/memory_store.py` - local profile and memory persistence.
-- `dipsy_dolphin/voice/` - retro voice selection, Windows speech backend, and isolated speech service contracts.
-- `scripts/windows_build.py` - packaging, model-bundle download, and installer orchestration.
-- `packaging/windows/` - Windows packaging shims and Inno Setup assets.
-- `docs/` - product, architecture, rendering, and Windows packaging notes.
-- `TODO.md` - prioritized roadmap from the current runtime state.
+- `dipsy_dolphin/ui/` - desktop window, character sprite playback, bubble UI, and presentation handling.
+- `dipsy_dolphin/core/` - dialogue coordination, session state, and memory structures.
+- `dipsy_dolphin/llm/` - local model/runtime discovery and response generation.
+- `dipsy_dolphin/desktop/` and `dipsy_dolphin/actions/` - bounded desktop-control actions and app catalog.
+- `dipsy_dolphin/storage/` - local profile and memory persistence.
+- `dipsy_dolphin/voice/` - retro voice selection and Windows speech service.
+- `assets/dipsy/` - current character sprite assets.
+- `scripts/windows_build.py` and `packaging/windows/` - Windows packaging and installer files.
 
 ## Run locally
 
@@ -123,6 +105,8 @@ uv run python -m scripts.windows_build installer --clean
 
 The Windows installer is now an online installer: it packages the app itself, then downloads the local model and llama.cpp runtime during setup. This keeps the GitHub release asset to a single installer file.
 
+Windows packaging assets now live under `packaging/windows/assets/`. The current v1 icon is derived from an existing Dipsy sprite and committed as `packaging/windows/assets/app.ico`.
+
 If you prefer Windows-native wrappers, `packaging/windows/build-app.ps1` and `packaging/windows/build-installer.ps1` remain thin shims around the Python tooling.
 
 If Inno Setup is not installed yet, one option is:
@@ -138,17 +122,20 @@ The generated outputs stay under `.artifacts/` so the repo root stays clean.
 Releases come directly from `project.version` in `pyproject.toml` when changes land on `main`.
 
 - If a push to `main` does not change `project.version`, no release is created.
-- PEP 440 prerelease versions like `0.1.0b1` publish GitHub prereleases.
-- Stable versions like `0.1.0` publish normal GitHub releases.
-- Installer assets are named from the same version, for example `DipsyDolphin-Setup-0.1.0b1.exe`.
+- Stable releases publish normal GitHub releases.
+- Installer assets are named from the same version, for example `DipsyDolphin-Setup-1.0.0.exe`.
+- Curated release notes are read from `docs/releases/<version>.md`.
+- The automated release workflow now runs packaging helper tests, builds the installer, and runs a fast release smoke check before publishing.
 
 Typical flow:
 
 ```powershell
-uv version 0.1.0b1
-git commit -am "Bump version to 0.1.0b1"
+uv version 1.0.0
+git commit -am "Release 1.0.0"
 git push origin main
 ```
+
+Before changing `project.version`, add a matching release notes file such as `docs/releases/1.0.1.md`.
 
 ## Controls
 
@@ -165,29 +152,3 @@ git push origin main
 - `tests/test_animation_state_machine.py` and `tests/test_presentation_controller.py` - presentation behavior contracts.
 - `tests/test_profile_store.py` and `tests/test_brain.py` - persistence and profile parsing helpers.
 - `tests/test_voice_retro.py`, `tests/test_voice_service.py`, and `tests/test_windows_speech_backend.py` - retro voice selection and runtime behavior.
-
-## Suggested next additions
-
-- Expand beyond the first desktop-control slice into richer assistant capabilities such as reminders, notes, or deeper app integrations.
-- Keep improving visual polish, staging, and sprite presentation.
-- Add push-to-talk or STT input.
-- Harden persistence, migrations, and developer observability.
-
-## AI-friendly workflow
-
-If you are using AI heavily in this repo, read in this order:
-
-1. `README.md`
-2. `AGENTS.md`
-3. `TODO.md`
-4. `docs/architecture.md`
-5. `docs/product-brief.md`
-6. `docs/rendering-decision.md`
-7. `dipsy_dolphin/core/controller.py`
-8. `dipsy_dolphin/llm/prompt_builder.py`
-9. `dipsy_dolphin/llm/response_parser.py`
-10. `dipsy_dolphin/llm/local_provider.py`
-11. `dipsy_dolphin/ui/app.py`
-12. `dipsy_dolphin/core/brain.py`
-
-That order gets you the product rules, runtime architecture, LLM contract, and UI host before the smaller helper modules.
